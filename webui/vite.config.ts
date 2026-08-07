@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { existsSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -65,29 +65,36 @@ export function gzipWebuiAssets(): Plugin {
  * files and symlinks (e.g. `.user.ini` placed by a hosting environment)
  * because it misidentifies the entry as a directory and calls `readdirSync`
  * on it.  `Dirent` from `readdirSync({ withFileTypes: true })` is also
- * unreliable on filesystems that report `DT_UNKNOWN` for `d_type`.
+ * unreliable on filesystems that report `DT_UNKNOWN` for `d_type`, and
+ * `unlinkSync`-first is not portable because macOS returns `EPERM` (not
+ * `EISDIR`) when unlinking a directory.
  *
- * Instead, try `unlinkSync` first — it succeeds for regular files, symlinks
- * (without following them), FIFOs, sockets, and device nodes.  On Linux the
- * only failure for an existing entry with the wrong type is `EISDIR`, which
- * tells us it is a real directory that needs recursive removal.
+ * Instead, use `lstatSync` — a dedicated `lstat` syscall that is always
+ * reliable and does not follow symlinks — to determine the entry type, then
+ * apply the correct removal primitive:
+ *   • symlink  → `unlinkSync` (removes the link itself, not the target)
+ *   • directory → recurse into children, then `rmdirSync`
+ *   • file/other → `unlinkSync`
  */
 function removeEntrySync(fullPath: string): void {
+  let st;
   try {
-    unlinkSync(fullPath);
-    return;
+    st = lstatSync(fullPath);
   } catch (e) {
-    const code = (e as { code?: string }).code;
-    // Entry vanished between readdirSync and unlinkSync — nothing to do.
-    if (code === "ENOENT") return;
-    // Not a directory — rethrow the original error.
-    if (code !== "EISDIR") throw e;
+    // Entry vanished between readdirSync and lstatSync — nothing to do.
+    if ((e as { code?: string }).code === "ENOENT") return;
+    throw e;
   }
-  // Entry is a directory: remove its contents, then the directory itself.
-  for (const name of readdirSync(fullPath)) {
-    removeEntrySync(path.join(fullPath, name));
+  if (st.isSymbolicLink()) {
+    unlinkSync(fullPath);
+  } else if (st.isDirectory()) {
+    for (const name of readdirSync(fullPath)) {
+      removeEntrySync(path.join(fullPath, name));
+    }
+    rmdirSync(fullPath);
+  } else {
+    unlinkSync(fullPath);
   }
-  rmdirSync(fullPath);
 }
 
 /**
