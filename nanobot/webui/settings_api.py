@@ -33,7 +33,9 @@ from nanobot.audio.transcription_registry import (
 from nanobot.config.loader import get_config_path, load_config, resolve_config_env_vars, save_config
 from nanobot.config.schema import Config, FallbackCandidate, ModelPresetConfig, ProviderConfig
 from nanobot.providers.image_generation import (
+    ImageGenerationError,
     get_image_gen_provider,
+    image_gen_provider_configs,
     image_gen_provider_names,
 )
 from nanobot.providers.registry import PROVIDERS, create_dynamic_spec, find_by_name
@@ -2280,6 +2282,107 @@ def update_image_generation_settings(query: QueryParams) -> dict[str, Any]:
     if changed:
         save_config(config)
     return settings_payload(requires_restart=changed)
+
+
+async def image_generation_models_payload(query: QueryParams) -> dict[str, Any]:
+    """Fetch an image generation provider's model list for Settings.
+
+    Dynamically queries the provider's ``/models`` API and filters for
+    image-capable models.  Falls back to the provider's static
+    ``model_options`` when the API is unreachable.  The result is advisory
+    only — users can always type a custom model id.
+    """
+    provider_name = (_query_first(query, "provider") or "").strip().lower()
+    if not provider_name:
+        raise WebUISettingsError("provider is required")
+
+    config = load_config()
+    provider_cls = get_image_gen_provider(provider_name)
+    if provider_cls is None:
+        raise WebUISettingsError("unknown image generation provider")
+
+    spec = find_by_name(provider_name)
+    label = spec.label if spec and spec.label else provider_name
+
+    base_payload: dict[str, Any] = {
+        "provider": provider_name,
+        "label": label,
+        "models": [],
+        "model_count": 0,
+        "message": None,
+        "fetched_at": time.time(),
+    }
+
+    # Fall back to static model_options.
+    static_models = list(provider_cls.model_options)
+
+    provider_configs = image_gen_provider_configs(config)
+    provider_config = provider_configs.get(provider_name)
+    api_key = (
+        _resolve_env_placeholders(provider_config.api_key)
+        if provider_config and isinstance(provider_config.api_key, str)
+        else None
+    )
+    api_base = (
+        _resolve_env_placeholders(provider_config.api_base)
+        if provider_config and isinstance(provider_config.api_base, str)
+        else None
+    )
+
+    if not api_key and provider_name not in {"ollama", "custom"}:
+        return {
+            **base_payload,
+            "status": "not_configured",
+            "message": "Configure this provider before loading models.",
+            "models": [{"id": mid} for mid in static_models],
+            "model_count": len(static_models),
+        }
+
+    extra_headers = (
+        provider_config.extra_headers
+        if provider_config and isinstance(provider_config.extra_headers, dict)
+        else None
+    )
+    proxy = (
+        provider_config.proxy
+        if provider_config and isinstance(provider_config.proxy, str)
+        else None
+    )
+
+    client = provider_cls(
+        api_key=api_key,
+        api_base=api_base,
+        extra_headers=extra_headers,
+        proxy=proxy,
+    )
+    try:
+        models = await client.fetch_models()
+    except ImageGenerationError as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "message": str(exc),
+            "models": [{"id": mid} for mid in static_models],
+            "model_count": len(static_models),
+        }
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "error",
+            "message": f"Could not load models: {exc}",
+            "models": [{"id": mid} for mid in static_models],
+            "model_count": len(static_models),
+        }
+
+    if not models:
+        models = static_models
+
+    return {
+        **base_payload,
+        "status": "available",
+        "models": [{"id": mid} for mid in models],
+        "model_count": len(models),
+    }
 
 
 def update_transcription_settings(query: QueryParams) -> dict[str, Any]:

@@ -3530,6 +3530,28 @@ describe("SettingsView Apps catalog", () => {
       },
     };
 
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/settings/image-generation/models")) {
+        const provider = new URL(url, "http://localhost").searchParams.get("provider") ?? "";
+        const modelMap: Record<string, string[]> = {
+          gemini: ["gemini-2.5-flash-image", "imagen-4.0-generate-001"],
+          custom: [],
+          openrouter: ["openai/gpt-5.4-image-2"],
+        };
+        return new Response(JSON.stringify({
+          provider,
+          label: provider,
+          status: "available",
+          catalog_kind: "custom",
+          models: (modelMap[provider] ?? []).map((id) => ({ id })),
+          model_count: modelMap[provider]?.length ?? 0,
+          fetched_at: Date.now(),
+        }), { headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { headers: { "content-type": "application/json" } });
+    }));
+
     renderSettingsView({ initialSection: "image", initialSettings: payload });
 
     expect(screen.queryByDisplayValue("openai/gpt-5.4-image-2")).not.toBeInTheDocument();

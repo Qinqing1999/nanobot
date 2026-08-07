@@ -222,7 +222,7 @@ def managed_weixin_feature_instances(
     *,
     setup_spec: Any | None = None,
 ) -> list[dict[str, Any]] | None:
-    """Return presentation overrides including the saved WeChat user ID per instance."""
+    """Return presentation overrides including the saved WeChat identity per instance."""
     defaults = weixin_default_config()
     specs = weixin_instance_specs(section, defaults, enabled_only=False)
     overrides: list[dict[str, Any]] = []
@@ -234,10 +234,12 @@ def managed_weixin_feature_instances(
             configured_dir=str(configured_dir) if configured_dir else None,
             instance_id=instance_id,
         )
-        account_id = _read_ilink_user_id(state_dir)
+        account_info = _read_account_info(state_dir)
         display_name = config.get("name") or instance_id
-        if account_id:
-            display_name = f"{display_name} ({account_id})"
+        if account_info["nickname"]:
+            display_name = account_info["nickname"]
+        elif account_info["ilink_user_id"]:
+            display_name = f'{display_name} ({account_info["ilink_user_id"]})'
         overrides.append({
             "id": instance_id,
             "display_name": str(display_name),
@@ -245,13 +247,49 @@ def managed_weixin_feature_instances(
     return overrides
 
 
-def _read_ilink_user_id(state_dir: Path) -> str:
-    """Read the saved ilink_user_id from account.json, if present."""
+def _read_account_info(state_dir: Path) -> dict[str, str]:
+    """Read the saved nickname and ilink_user_id from account.json, if present."""
     try:
         payload = json.loads((state_dir / "account.json").read_text(encoding="utf-8"))
-        return str(payload.get("ilink_user_id", "") or "").strip()
+        return {
+            "nickname": str(payload.get("nickname", "") or "").strip(),
+            "ilink_user_id": str(payload.get("ilink_user_id", "") or "").strip(),
+        }
     except (OSError, ValueError, TypeError):
-        return ""
+        return {"nickname": "", "ilink_user_id": ""}
+
+
+def remove_weixin_instance(
+    section: Any,
+    *,
+    instance_id: str = DEFAULT_INSTANCE_ID,
+) -> dict[str, Any]:
+    """Return canonical WeChat section with one instance removed.
+
+    The default instance is never removed — only its login state is cleared.
+    """
+    instance_id = validate_instance_id(instance_id)
+    canonical = canonical_weixin_section(section, weixin_default_config())
+    instances = canonical.setdefault("instances", [])
+    if instance_id == DEFAULT_INSTANCE_ID:
+        # Reset the default instance to its base config instead of removing it.
+        for instance in instances:
+            if instance.get("id") == DEFAULT_INSTANCE_ID or instance.get("instanceId") == DEFAULT_INSTANCE_ID:
+                base = _normalize_weixin_instance(
+                    {"id": DEFAULT_INSTANCE_ID},
+                    weixin_default_config(),
+                    fallback_id=DEFAULT_INSTANCE_ID,
+                )
+                instance.clear()
+                instance.update(base)
+                break
+        return canonical
+    canonical["instances"] = [
+        instance
+        for instance in instances
+        if instance.get("id") != instance_id and instance.get("instanceId") != instance_id
+    ]
+    return canonical
 
 
 WEIXIN_MANAGEMENT = ChannelManagementSpec(
@@ -269,6 +307,7 @@ __all__ = [
     "DEFAULT_INSTANCE_ID",
     "WEIXIN_MANAGEMENT",
     "canonical_weixin_section",
+    "remove_weixin_instance",
     "runtime_channel_name",
     "upsert_weixin_instance",
     "validate_instance_id",

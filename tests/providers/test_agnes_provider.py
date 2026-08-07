@@ -92,8 +92,39 @@ def test_agnes_builtin_models():
 
 
 def test_agnes_image_generation_model_options():
-    """AgnesImageGenerationClient should list agnes-image-2.0-flash as a model option."""
-    assert "agnes-image-2.0-flash" in AgnesImageGenerationClient.model_options
+    """AgnesImageGenerationClient should list agnes-image-2.1-flash as a model option."""
+    assert "agnes-image-2.1-flash" in AgnesImageGenerationClient.model_options
+
+
+def test_agnes_image_model_keywords():
+    """AgnesImageGenerationClient should filter models by agnes-image keyword."""
+    assert "agnes-image" in AgnesImageGenerationClient.image_model_keywords
+    assert AgnesImageGenerationClient._is_image_model("agnes-image-2.1-flash")
+    assert not AgnesImageGenerationClient._is_image_model("agnes-2.0-flash")
+
+
+@pytest.mark.asyncio
+async def test_agnes_fetch_models_filters_image_models() -> None:
+    """fetch_models should call /models and return only image models."""
+
+    class FakeGetClient:
+        async def get(self, url: str, **kwargs: Any) -> FakeResponse:
+            return FakeResponse({
+                "data": [
+                    {"id": "agnes-2.0-flash"},
+                    {"id": "agnes-2.5-flash"},
+                    {"id": "agnes-image-2.1-flash"},
+                    {"id": "agnes-video-v2.0"},
+                ],
+            })
+
+    client = AgnesImageGenerationClient(
+        api_key="sk-test",
+        api_base="https://api.agnes-ai.cn/v1",
+        client=FakeGetClient(),  # type: ignore[arg-type]
+    )
+    models = await client.fetch_models()
+    assert models == ["agnes-image-2.1-flash"]
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +207,7 @@ async def test_agnes_image_generation_payload_and_response(
 
     response = await client.generate(
         prompt="a cat on the moon",
-        model="agnes-image-2.0-flash",
+        model="agnes-image-2.1-flash",
         aspect_ratio="16:9",
     )
 
@@ -187,7 +218,7 @@ async def test_agnes_image_generation_payload_and_response(
     assert call["headers"]["Authorization"] == "Bearer sk-agnes-test"
     assert call["headers"]["X-Test"] == "1"
     body = call["json"]
-    assert body["model"] == "agnes-image-2.0-flash"
+    assert body["model"] == "agnes-image-2.1-flash"
     assert body["prompt"] == "a cat on the moon"
     assert body["n"] == 1
     assert body["size"] == "1536x1024"
@@ -204,7 +235,7 @@ async def test_agnes_image_generation_default_size() -> None:
         client=fake,  # type: ignore[arg-type]
     )
 
-    await client.generate(prompt="a dog", model="agnes-image-2.0-flash")
+    await client.generate(prompt="a dog", model="agnes-image-2.1-flash")
 
     body = fake.calls[0]["json"]
     assert body["size"] == "1024x1024"
@@ -221,7 +252,7 @@ async def test_agnes_image_generation_explicit_size() -> None:
 
     await client.generate(
         prompt="a bird",
-        model="agnes-image-2.0-flash",
+        model="agnes-image-2.1-flash",
         image_size="1024x1536",
     )
 
@@ -242,7 +273,7 @@ async def test_agnes_image_generation_with_reference_image(tmp_path: Path) -> No
 
     await client.generate(
         prompt="edit this image",
-        model="agnes-image-2.0-flash",
+        model="agnes-image-2.1-flash",
         reference_images=[str(ref)],
     )
 
@@ -257,7 +288,7 @@ async def test_agnes_image_generation_requires_api_key() -> None:
     client = AgnesImageGenerationClient(api_key=None)
 
     with pytest.raises(ImageGenerationError, match="API key"):
-        await client.generate(prompt="draw", model="agnes-image-2.0-flash")
+        await client.generate(prompt="draw", model="agnes-image-2.1-flash")
 
 
 @pytest.mark.asyncio
@@ -266,7 +297,7 @@ async def test_agnes_image_generation_no_images_raises() -> None:
     client = AgnesImageGenerationClient(api_key="sk-agnes-test", client=fake)  # type: ignore[arg-type]
 
     with pytest.raises(ImageGenerationError, match="returned no images"):
-        await client.generate(prompt="draw", model="agnes-image-2.0-flash")
+        await client.generate(prompt="draw", model="agnes-image-2.1-flash")
 
 
 @pytest.mark.asyncio
@@ -279,7 +310,7 @@ async def test_agnes_image_generation_http_error() -> None:
     )
 
     with pytest.raises(ImageGenerationError, match="HTTP 400"):
-        await client.generate(prompt="draw", model="agnes-image-2.0-flash")
+        await client.generate(prompt="draw", model="agnes-image-2.1-flash")
 
 
 @pytest.mark.asyncio
@@ -290,7 +321,7 @@ async def test_agnes_image_generation_uses_default_base_url() -> None:
         client=fake,  # type: ignore[arg-type]
     )
 
-    await client.generate(prompt="test", model="agnes-image-2.0-flash")
+    await client.generate(prompt="test", model="agnes-image-2.1-flash")
 
     assert fake.calls[0]["url"] == "https://apihub.agnes-ai.com/v1/images/generations"
 
@@ -316,7 +347,7 @@ async def test_agnes_image_generation_all_aspect_ratios() -> None:
     for ratio, expected_size in expected.items():
         await client.generate(
             prompt=f"test {ratio}",
-            model="agnes-image-2.0-flash",
+            model="agnes-image-2.1-flash",
             aspect_ratio=ratio,
         )
         body = fake.calls[-1]["json"]
@@ -333,7 +364,7 @@ async def test_agnes_image_generation_b64_response() -> None:
         client=fake,  # type: ignore[arg-type]
     )
 
-    response = await client.generate(prompt="b64 test", model="agnes-image-2.0-flash")
+    response = await client.generate(prompt="b64 test", model="agnes-image-2.1-flash")
 
     assert response.images == [PNG_DATA_URL]
 
@@ -361,7 +392,7 @@ async def test_agnes_image_generation_retries_on_503(monkeypatch) -> None:
         client=fake,  # type: ignore[arg-type]
     )
 
-    response = await client.generate(prompt="retry test", model="agnes-image-2.0-flash")
+    response = await client.generate(prompt="retry test", model="agnes-image-2.1-flash")
 
     assert response.images == [PNG_DATA_URL]
     assert len(fake.calls) == 2  # 1 failed + 1 success
@@ -386,7 +417,7 @@ async def test_agnes_image_generation_retries_on_429(monkeypatch) -> None:
         client=fake,  # type: ignore[arg-type]
     )
 
-    response = await client.generate(prompt="retry test", model="agnes-image-2.0-flash")
+    response = await client.generate(prompt="retry test", model="agnes-image-2.1-flash")
 
     assert response.images == [PNG_DATA_URL]
     assert len(fake.calls) == 3  # 2 failed + 1 success = _RETRY_MAX_ATTEMPTS
@@ -412,7 +443,7 @@ async def test_agnes_image_generation_retry_exhausted(monkeypatch) -> None:
     )
 
     with pytest.raises(ImageGenerationError, match="HTTP 503"):
-        await client.generate(prompt="exhausted retry", model="agnes-image-2.0-flash")
+        await client.generate(prompt="exhausted retry", model="agnes-image-2.1-flash")
 
     assert len(fake.calls) == _RETRY_MAX_ATTEMPTS
 
@@ -435,6 +466,6 @@ async def test_agnes_image_generation_no_retry_on_400(monkeypatch) -> None:
     )
 
     with pytest.raises(ImageGenerationError, match="HTTP 400"):
-        await client.generate(prompt="no retry", model="agnes-image-2.0-flash")
+        await client.generate(prompt="no retry", model="agnes-image-2.1-flash")
 
     assert call_count == 1  # no retries

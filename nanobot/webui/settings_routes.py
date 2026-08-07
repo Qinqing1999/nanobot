@@ -56,6 +56,7 @@ from nanobot.webui.settings_api import (
     create_provider_settings,
     decorate_settings_payload,
     delete_model_configuration,
+    image_generation_models_payload,
     login_oauth_provider,
     logout_oauth_provider,
     migrate_model_configurations,
@@ -89,7 +90,7 @@ _OAUTH_CALLBACK_HEADER = "X-Nanobot-OAuth-Callback"
 _OAUTH_RESPONSE_HEADER_MAX_BYTES = 8 * 1024
 
 _SKIP_FIELD = object()
-_CHANNEL_CONNECT_ACTIONS = frozenset({"start", "poll", "cancel", "disconnect"})
+_CHANNEL_CONNECT_ACTIONS = frozenset({"start", "poll", "cancel", "disconnect", "delete"})
 
 
 def _channel_connect_route(path: str) -> tuple[str, str] | None:
@@ -182,6 +183,8 @@ class WebUISettingsRouter:
             return await self._handle_settings_api_service_stop(request)
         if path == "/api/settings/image-generation/update":
             return await self._handle_settings_image_generation_update(request)
+        if path == "/api/settings/image-generation/models":
+            return await self._handle_settings_image_generation_models(request)
         if path == "/api/settings/transcription/update":
             return self._handle_settings_transcription_update(request)
         if path == "/api/settings/network-safety/update":
@@ -458,6 +461,18 @@ class WebUISettingsRouter:
         except Exception:
             self.logger.exception("failed to load provider model list")
             return self._error_response(500, "failed to load provider model list")
+        return self._json_response(payload)
+
+    async def _handle_settings_image_generation_models(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = await image_generation_models_payload(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        except Exception:
+            self.logger.exception("failed to load image generation model list")
+            return self._error_response(500, "failed to load image generation model list")
         return self._json_response(payload)
 
     async def _handle_settings_provider_oauth(

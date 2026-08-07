@@ -1021,6 +1021,7 @@ export interface ChannelConnectPayload {
   expires_at_ms?: number;
   app_id?: string;
   account?: string;
+  nickname?: string;
   nanobot_features?: NanobotFeaturesPayload;
 }
 

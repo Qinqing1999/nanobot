@@ -125,6 +125,7 @@ import {
   fetchSettings,
   fetchSettingsUsage,
   fetchCliApps,
+  fetchImageGenerationModels,
   fetchMcpPresets,
   fetchNanobotFeatures,
   fetchProviderModels,
@@ -5040,7 +5041,6 @@ function ImageGenerationSettings({
               token={token}
               settings={settings}
               provider={form.provider}
-              models={selectedProvider?.models ?? []}
               value={form.model}
               showProviderLogos={showBrandLogos}
               emptyLabel={tx("settings.image.selectModel", "Select image model")}
@@ -5053,6 +5053,8 @@ function ImageGenerationSettings({
                 "Type the model ID supported by this provider.",
               )}
               onChange={(model) => onChangeForm((prev) => ({ ...prev, model }))}
+              fetchModelsFn={fetchImageGenerationModels}
+              forceCanFetch={selectedProvider?.configured ?? false}
             />
           </SettingsRow>
           <SettingsRow title={tx("settings.rows.defaultAspectRatio", "Default aspect")}>
@@ -8934,6 +8936,8 @@ function ModelIdPicker({
   searchPlaceholder,
   emptyMessage,
   onChange,
+  fetchModelsFn,
+  forceCanFetch,
 }: {
   token: string;
   settings: SettingsPayload;
@@ -8945,6 +8949,8 @@ function ModelIdPicker({
   searchPlaceholder?: string;
   emptyMessage?: string;
   onChange: (model: string) => void;
+  fetchModelsFn?: (token: string, provider: string) => Promise<ProviderModelsPayload>;
+  forceCanFetch?: boolean;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -8971,8 +8977,9 @@ function ModelIdPicker({
     providerRow?.auth_type === "oauth" &&
     !providerHasBuiltinModels;
   const canFetchModels =
-    !hasStaticModels &&
-    hasConcreteProvider && providerConfigured && !providerUsesManualModelIds;
+    (forceCanFetch ?? false) ||
+    (!hasStaticModels &&
+      hasConcreteProvider && providerConfigured && !providerUsesManualModelIds);
   const normalizedQuery = query.trim().toLowerCase();
   const providerModels: ProviderModelsPayload["models"] = useMemo(
     () => hasStaticModels
@@ -9027,7 +9034,7 @@ function ModelIdPicker({
     setPayload(null);
     setError(null);
     setLoading(true);
-    fetchProviderModels(tokenRef.current, effectiveProvider)
+    (fetchModelsFn ?? fetchProviderModels)(tokenRef.current, effectiveProvider)
       .then((nextPayload) => {
         if (!cancelled) setPayload(nextPayload);
       })

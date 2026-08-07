@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.channels.connect import ChannelConnectError, QueryParams, query_first
-from nanobot.channels.weixin.instances import DEFAULT_INSTANCE_ID, validate_instance_id
-from nanobot.config.loader import load_config
+from nanobot.channels.weixin.instances import (
+    DEFAULT_INSTANCE_ID,
+    remove_weixin_instance,
+    validate_instance_id,
+)
+from nanobot.config.loader import load_config, save_config
 
 if TYPE_CHECKING:
     from nanobot.channels.weixin.runtime import WeixinChannel
@@ -52,6 +56,10 @@ class WeixinConnectStore:
             instance_id = (query_first(query, "instance_id") or "default").strip()
             return await self.disconnect(instance_id=instance_id)
 
+        if action == "delete":
+            instance_id = (query_first(query, "instance_id") or "default").strip()
+            return await self.delete_instance(instance_id=instance_id)
+
         session_id = (query_first(query, "session_id") or "").strip()
         if not session_id:
             raise ChannelConnectError("missing WeChat connect session")
@@ -82,6 +90,7 @@ class WeixinConnectStore:
                 "status": "succeeded",
                 "message": "WeChat is already connected.",
                 "account": channel.connect_account_id,
+                "nickname": channel.connect_account_nickname,
                 "interval_ms": 2000,
             }
 
@@ -161,8 +170,12 @@ class WeixinConnectStore:
                 }
             base_url = str(status_payload.get("baseurl", "") or "")
             ilink_user_id = str(status_payload.get("ilink_user_id", "") or "")
+            nickname = str(status_payload.get("nickname", "") or "")
             session.channel.connect_commit_account(
-                token=token, base_url=base_url, ilink_user_id=ilink_user_id
+                token=token,
+                base_url=base_url,
+                ilink_user_id=ilink_user_id,
+                nickname=nickname,
             )
             self._sessions.pop(session_id, None)
             await self._close_channel(session.channel)
@@ -172,6 +185,7 @@ class WeixinConnectStore:
                 "status": "succeeded",
                 "message": "WeChat is connected.",
                 "account": ilink_user_id,
+                "nickname": nickname,
             }
 
         if status == "scaned_but_redirect":
@@ -241,6 +255,40 @@ class WeixinConnectStore:
             "instance_id": instance_id,
             "status": "succeeded",
             "message": "WeChat account disconnected." if cleared else "No WeChat account was connected.",
+            "cleared": cleared,
+        }
+
+    async def delete_instance(self, *, instance_id: str = DEFAULT_INSTANCE_ID) -> dict[str, Any]:
+        """Delete saved login state and remove the instance from config."""
+        try:
+            instance_id = validate_instance_id(instance_id or DEFAULT_INSTANCE_ID)
+        except ValueError as exc:
+            raise ChannelConnectError(str(exc), status=400) from exc
+
+        # Clear the saved account state first.
+        channel = self._build_channel(instance_id=instance_id)
+        cleared = channel.connect_clear_account()
+        await self._close_channel(channel)
+
+        # Remove the instance from the config (default instance is reset, not removed).
+        config = load_config()
+        section = getattr(config.channels, "weixin", None)
+        if section is not None and hasattr(section, "model_dump"):
+            section_data = section.model_dump(mode="json", by_alias=True)
+        elif isinstance(section, dict):
+            section_data = dict(cast(dict[str, Any], section))
+        else:
+            section_data = {}
+
+        updated_section = remove_weixin_instance(section_data, instance_id=instance_id)
+        setattr(config.channels, "weixin", updated_section)
+        save_config(config)
+
+        return {
+            "session_id": "",
+            "instance_id": instance_id,
+            "status": "succeeded",
+            "message": "WeChat instance deleted.",
             "cleared": cleared,
         }
 

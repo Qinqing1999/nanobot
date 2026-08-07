@@ -643,3 +643,116 @@ def test_feature_instances_without_saved_state(
     assert len(overrides) == 1
     assert overrides[0]["id"] == "default"
     assert "wxid" not in overrides[0]["display_name"]
+
+
+def test_feature_instances_shows_nickname_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """feature_instances should show the WeChat nickname as display_name when available."""
+    from nanobot.channels.weixin.instances import managed_weixin_feature_instances
+
+    config_path = tmp_path / "config.json"
+    save_config(Config.model_validate({}), config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    state_dir = config_path.parent / "weixin" / "acct_nick"
+    state_dir.mkdir(parents=True)
+    (state_dir / "account.json").write_text(json.dumps({
+        "token": "tok_nick",
+        "ilink_user_id": "wxid_internal_123",
+        "nickname": "张三",
+    }))
+
+    section = {
+        "instances": [
+            {"id": "acct_nick", "name": "nanobot", "enabled": True},
+        ]
+    }
+
+    overrides = managed_weixin_feature_instances(section)
+    assert overrides is not None
+    assert len(overrides) == 1
+    assert overrides[0]["display_name"] == "张三"
+
+
+def test_feature_instances_falls_back_to_ilink_user_id_without_nickname(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """feature_instances should fall back to ilink_user_id when nickname is absent."""
+    from nanobot.channels.weixin.instances import managed_weixin_feature_instances
+
+    config_path = tmp_path / "config.json"
+    save_config(Config.model_validate({}), config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    state_dir = config_path.parent / "weixin" / "acct_fallback"
+    state_dir.mkdir(parents=True)
+    (state_dir / "account.json").write_text(json.dumps({
+        "token": "tok_fallback",
+        "ilink_user_id": "wxid_fallback_only",
+    }))
+
+    section = {
+        "instances": [
+            {"id": "acct_fallback", "name": "MyBot", "enabled": True},
+        ]
+    }
+
+    overrides = managed_weixin_feature_instances(section)
+    assert overrides is not None
+    assert overrides[0]["display_name"] == "MyBot (wxid_fallback_only)"
+
+
+def test_remove_weixin_instance_removes_non_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """remove_weixin_instance should remove a non-default instance from the section."""
+    from nanobot.channels.weixin.instances import remove_weixin_instance
+
+    config_path = tmp_path / "config.json"
+    save_config(Config.model_validate({}), config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    section = {
+        "instances": [
+            {"id": "default", "name": "nanobot", "enabled": True},
+            {"id": "acct_remove", "name": "ToRemove", "enabled": True},
+            {"id": "acct_keep", "name": "ToKeep", "enabled": True},
+        ]
+    }
+
+    result = remove_weixin_instance(section, instance_id="acct_remove")
+    ids = [inst["id"] for inst in result["instances"]]
+    assert "acct_remove" not in ids
+    assert "default" in ids
+    assert "acct_keep" in ids
+
+
+def test_remove_weixin_instance_resets_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """remove_weixin_instance should reset (not remove) the default instance."""
+    from nanobot.channels.weixin.instances import remove_weixin_instance
+
+    config_path = tmp_path / "config.json"
+    save_config(Config.model_validate({}), config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    section = {
+        "instances": [
+            {"id": "default", "name": "custom_name", "enabled": True, "token": "abc"},
+            {"id": "acct_other", "name": "Other", "enabled": True},
+        ]
+    }
+
+    result = remove_weixin_instance(section, instance_id="default")
+    ids = [inst["id"] for inst in result["instances"]]
+    assert "default" in ids
+    assert "acct_other" in ids
+    default_inst = next(inst for inst in result["instances"] if inst["id"] == "default")
+    # The default instance should be reset to base config (no custom token)
+    assert default_inst.get("token", "") == ""

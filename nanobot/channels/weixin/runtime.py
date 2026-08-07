@@ -171,6 +171,7 @@ class WeixinChannel(BaseChannel):
         self._state_dir: Path | None = None
         self._token: str = ""
         self._ilink_user_id: str = ""
+        self._nickname: str = ""
         self._poll_task: asyncio.Task[None] | None = None
         self._next_poll_timeout_s: int = DEFAULT_LONG_POLL_TIMEOUT_S
         self._session_pause_until: float = 0.0
@@ -212,6 +213,7 @@ class WeixinChannel(BaseChannel):
             data = cast(dict[str, Any], json.loads(state_file.read_text()))
             self._token = data.get("token", "")
             self._ilink_user_id = str(data.get("ilink_user_id", "") or "")
+            self._nickname = str(data.get("nickname", "") or "")
             self._get_updates_buf = data.get("get_updates_buf", "")
             context_tokens = data.get("context_tokens", {})
             if isinstance(context_tokens, dict):
@@ -266,6 +268,7 @@ class WeixinChannel(BaseChannel):
             data = {
                 "token": self._token,
                 "ilink_user_id": self._ilink_user_id,
+                "nickname": self._nickname,
                 "get_updates_buf": self._get_updates_buf,
                 "context_tokens": self._context_tokens,
                 "typing_tickets": self._typing_tickets,
@@ -416,15 +419,21 @@ class WeixinChannel(BaseChannel):
                     bot_id = status_data.get("ilink_bot_id", "")
                     base_url = status_data.get("baseurl", "")
                     user_id = status_data.get("ilink_user_id", "")
+                    nickname = str(status_data.get("nickname", "") or "")
                     if token:
                         self._token = token
+                        if user_id:
+                            self._ilink_user_id = str(user_id)
+                        if nickname:
+                            self._nickname = nickname
                         if base_url:
                             self.config.base_url = base_url
                         self._save_state()
                         self.logger.info(
-                            "login successful! bot_id={} user_id={}",
+                            "login successful! bot_id={} user_id={} nickname={}",
                             bot_id,
                             user_id,
+                            nickname or "(unknown)",
                         )
                         return True
                     else:
@@ -516,10 +525,19 @@ class WeixinChannel(BaseChannel):
     def connect_poll_error_is_retryable(self, err: Exception) -> bool:
         return self._is_retryable_qr_poll_error(err)
 
-    def connect_commit_account(self, *, token: str, base_url: str, ilink_user_id: str = "") -> None:
+    def connect_commit_account(
+        self,
+        *,
+        token: str,
+        base_url: str,
+        ilink_user_id: str = "",
+        nickname: str = "",
+    ) -> None:
         self._token = token
         if ilink_user_id:
             self._ilink_user_id = ilink_user_id
+        if nickname:
+            self._nickname = nickname
         if base_url:
             self.config.base_url = base_url
         self._save_state(force=True)
@@ -528,6 +546,7 @@ class WeixinChannel(BaseChannel):
         """Delete the saved account state file. Returns True if a file was deleted."""
         self._token = ""
         self._ilink_user_id = ""
+        self._nickname = ""
         self._get_updates_buf = ""
         self._context_tokens = {}
         self._typing_tickets = {}
@@ -541,6 +560,11 @@ class WeixinChannel(BaseChannel):
     def connect_account_id(self) -> str:
         """Return the saved ilink_user_id for this account, if any."""
         return self._ilink_user_id
+
+    @property
+    def connect_account_nickname(self) -> str:
+        """Return the saved WeChat nickname for this account, if any."""
+        return self._nickname
 
     async def connect_close_client(self) -> None:
         self._running = False

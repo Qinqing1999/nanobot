@@ -664,6 +664,20 @@ export async function disconnectChannelConnect(
   );
 }
 
+export async function deleteChannelInstance(
+  token: string,
+  channel: string,
+  options: { instanceId?: string } = {},
+  base: string = "",
+): Promise<ChannelConnectPayload> {
+  const query = new URLSearchParams();
+  if (options.instanceId) query.set("instance_id", options.instanceId);
+  return request<ChannelConnectPayload>(
+    `${base}/api/settings/channels/${channel}/connect/delete?${query}`,
+    token,
+  );
+}
+
 export async function configureChannel(
   token: string,
   name: string,
@@ -739,6 +753,21 @@ export async function fetchProviderModels(
   query.set("provider", provider);
   return request<ProviderModelsPayload>(
     `${base}/api/settings/provider-models?${query}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function fetchImageGenerationModels(
+  token: string,
+  provider: string,
+  base: string = "",
+): Promise<ProviderModelsPayload> {
+  const query = new URLSearchParams();
+  query.set("provider", provider);
+  return request<ProviderModelsPayload>(
+    `${base}/api/settings/image-generation/models?${query}`,
     token,
     undefined,
     API_READ_TIMEOUT_MS,

@@ -406,12 +406,67 @@ class ImageGenerationProvider(ABC):
         async with httpx.AsyncClient(**self._http_client_kwargs()) as c:
             return await c.post(url, headers=headers, json=body)
 
+    # ------------------------------------------------------------------
+    # Dynamic model discovery
+    # ------------------------------------------------------------------
+
+    #: Substring keywords used to identify image-capable models from a
+    #: ``/models`` listing.  When empty, *all* models are returned.
+    image_model_keywords: tuple[str, ...] = ()
+
+    @classmethod
+    def _is_image_model(cls, model_id: str) -> bool:
+        """Return True if *model_id* looks like an image generation model."""
+        if not cls.image_model_keywords:
+            return True
+        lower = model_id.lower()
+        return any(kw in lower for kw in cls.image_model_keywords)
+
+    async def fetch_models(self) -> list[str]:
+        """Fetch the list of image model IDs from the provider's ``/models`` API.
+
+        Returns a filtered list of model IDs suitable for image generation.
+        Raises ``ImageGenerationError`` on network or auth failures.
+        """
+        if not self.api_base:
+            raise ImageGenerationError("API base URL is not configured")
+        headers: dict[str, str] = {"Accept": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers.update(self.extra_headers)
+        url = f"{self.api_base}/models"
+        try:
+            if self._client is not None:
+                response = await self._client.get(
+                    url, headers=headers, follow_redirects=False
+                )
+            else:
+                async with httpx.AsyncClient(**self._http_client_kwargs()) as c:
+                    response = await c.get(
+                        url, headers=headers, follow_redirects=False
+                    )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ImageGenerationError(
+                f"Failed to fetch models (HTTP {exc.response.status_code})"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ImageGenerationError(f"Failed to fetch models: {exc}") from exc
+        data = _as_json_object(response.json()) or {}
+        all_ids = [
+            item.get("id")
+            for item in _as_json_objects(data.get("data"))
+            if isinstance(item.get("id"), str)
+        ]
+        return [mid for mid in all_ids if self._is_image_model(mid)]
+
 
 class OpenRouterImageGenerationClient(ImageGenerationProvider):
     """Small async client for OpenRouter Chat Completions image generation."""
 
     provider_name = "openrouter"
     model_options = ("openai/gpt-5.4-image-2",)
+    image_model_keywords = ("image",)
     missing_key_message = (
         "OpenRouter API key is not configured. Set providers.openrouter.apiKey."
     )
@@ -501,6 +556,7 @@ class AIHubMixImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "aihubmix"
     model_options = ("gpt-image-2-free",)
+    image_model_keywords = ("image",)
     missing_key_message = (
         "AIHubMix API key is not configured. Set providers.aihubmix.apiKey."
     )
@@ -673,6 +729,8 @@ class OllamaImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "ollama"
     model_options = ("x/z-image-turbo",)
+    # Ollama serves local models; don't filter by keyword.
+    image_model_keywords = ()
     default_timeout = 300.0
 
     def _default_base_url(self) -> str:
@@ -750,6 +808,7 @@ class GeminiImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "gemini"
     model_options = ("gemini-2.5-flash-image", "imagen-4.0-generate-001")
+    image_model_keywords = ("image", "imagen")
     missing_key_message = (
         "Gemini API key is not configured. Set providers.gemini.apiKey."
     )
@@ -1046,6 +1105,7 @@ class MiniMaxImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "minimax"
     model_options = ("image-01",)
+    image_model_keywords = ("image",)
     missing_key_message = (
         "MiniMax API key is not configured. Set providers.minimax.apiKey."
     )
@@ -1180,6 +1240,7 @@ class OpenAIImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "openai"
     model_options = ("gpt-image-2", "gpt-image-1", "dall-e-3", "dall-e-2")
+    image_model_keywords = ("gpt-image", "dall-e")
     missing_key_message = (
         "OpenAI API key is not configured. Set providers.openai.apiKey."
     )
@@ -1332,6 +1393,8 @@ class CustomImageGenerationClient(ImageGenerationProvider):
     """OpenAI-compatible Images API for user-configured custom providers."""
 
     provider_name = "custom"
+    # Custom providers: don't filter, let the user pick any model.
+    image_model_keywords = ()
     missing_base_message = (
         "Custom image generation API base is not configured. Set providers.custom.apiBase."
     )
@@ -1428,6 +1491,8 @@ class CodexImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "openai_codex"
     model_options = ("gpt-5.4",)
+    # Codex uses chat models with the image_generation tool; don't filter.
+    image_model_keywords = ()
     missing_key_message = (
         "Codex OAuth token is unavailable. "
         "Log in with Codex subscription first."
@@ -1732,6 +1797,7 @@ class StepFunImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "stepfun"
     model_options = ("step-image-edit-2", "step-1x-medium")
+    image_model_keywords = ("step-image", "step-1x")
     missing_key_message = (
         "StepFun API key is not configured. Set providers.stepfun.apiKey."
     )
@@ -1857,6 +1923,7 @@ class ZhipuImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "zhipu"
     model_options = ("glm-image", "cogview-4", "cogview-4-250304", "cogview-3-flash")
+    image_model_keywords = ("glm-image", "cogview")
     missing_key_message = "Zhipu API key is not configured. Set providers.zhipu.apiKey."
     default_timeout = _ZHIPU_TIMEOUT_S
 
@@ -2012,6 +2079,7 @@ class ModelScopeImageGenerationClient(ImageGenerationProvider):
 
     provider_name = "modelscope"
     model_options = ("Qwen/Qwen-Image-2512",)
+    image_model_keywords = ("image",)
     missing_key_message = (
         "ModelScope API key is not configured. Set providers.modelscope.apiKey."
     )
@@ -2182,7 +2250,7 @@ class AgnesImageGenerationClient(ImageGenerationProvider):
 
     Agnes AI provides an OpenAI-compatible Images API at
     ``https://apihub.agnes-ai.com/v1/images/generations``.
-    The ``agnes-image-2.0-flash`` model supports text-to-image
+    The ``agnes-image-2.1-flash`` model supports text-to-image
     generation and image editing via the ``image`` field.
 
     Note: Agnes AI does **not** accept ``response_format``; the API
@@ -2190,7 +2258,8 @@ class AgnesImageGenerationClient(ImageGenerationProvider):
     """
 
     provider_name = "agnes"
-    model_options = ("agnes-image-2.0-flash",)
+    model_options = ("agnes-image-2.1-flash",)
+    image_model_keywords = ("agnes-image",)
     missing_key_message = (
         "Agnes AI API key is not configured. Set providers.agnes.apiKey."
     )

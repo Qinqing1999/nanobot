@@ -9,7 +9,7 @@ import {
 import type { ChannelPluginPanelProps } from "@/channel-plugins/types";
 import { ChannelInstancesPanel } from "@/components/settings/channels/ChannelInstancesPanel";
 import { Button } from "@/components/ui/button";
-import { disableNanobotFeature, enableNanobotFeature, disconnectChannelConnect } from "@/lib/api";
+import { deleteChannelInstance, disableNanobotFeature, enableNanobotFeature, disconnectChannelConnect } from "@/lib/api";
 import type {
   NanobotChannelInstanceInfo,
   NanobotFeatureInfo,
@@ -47,13 +47,11 @@ export function WeixinAssistantsPanel({
         configuredLabel: tx("custom.configured", "Connected"),
         needsSetupLabel: tx("custom.needsSetup", "Needs login"),
         renderInstanceSummary: (instance) => {
-          const account = extractAccountId(instance.display_name || instance.name);
-          if (account) {
-            return tx("custom.accountId", "WeChat ID: {{id}}", { id: account });
+          const name = instance.display_name?.trim() || instance.name.trim();
+          if (instance.configured) {
+            return tx("custom.connectedAs", "Connected as {{name}}", { name });
           }
-          return instance.configured
-            ? tx("custom.configured", "Connected")
-            : tx("custom.notConnected", "Not connected");
+          return tx("custom.notConnected", "Not connected");
         },
         renderInstanceAction: (instance) => (
           <WeixinInstanceAction
@@ -143,9 +141,26 @@ function WeixinInstanceAction({
     }
   };
 
+  const deleteInstance = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteChannelInstance(token, "weixin", { instanceId: instance.id });
+      onFeaturesUpdate(
+        await disableNanobotFeature(token, "weixin", { instanceId: instance.id }),
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isDefault = instance.id === "default";
+
   return (
     <>
-      <div className="mt-3 flex justify-end gap-2">
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
         <Button
           type="button"
           size="sm"
@@ -176,6 +191,27 @@ function WeixinInstanceAction({
           )}
           {tx("custom.disconnect", "Disconnect")}
         </Button>
+        {!isDefault ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-full border-destructive/30 bg-background/80 px-3 text-[12px] font-semibold text-destructive hover:bg-destructive/10"
+            onClick={() => {
+              if (window.confirm(tx("custom.confirmDelete", "Delete this WeChat instance? This cannot be undone."))) {
+                void deleteInstance();
+              }
+            }}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            )}
+            {tx("custom.delete", "Delete")}
+          </Button>
+        ) : null}
       </div>
       {error ? (
         <div className="mt-3 rounded-[12px] border border-destructive/20 px-3 py-2 text-[12px] leading-5 text-destructive">
@@ -208,10 +244,4 @@ function weixinAccountCountLabel(
 
 function instanceDisplayName(instance: NanobotChannelInstanceInfo): string {
   return instance.display_name?.trim() || instance.name.trim() || instance.id;
-}
-
-function extractAccountId(displayName: string): string | null {
-  // display_name format: "nanobot (wxid_xxx)" — extract the parenthesized ID
-  const match = displayName.match(/\(([^)]+)\)\s*$/);
-  return match ? match[1] : null;
 }
