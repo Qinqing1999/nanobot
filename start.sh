@@ -86,14 +86,31 @@ fi
 # ── Step 2: 安装 Python 依赖 ─────────────────────────────────────────────────
 info "━━━ Step 2/4: 安装 Python 依赖 ━━━"
 
+# 安装 channel 依赖的公共函数 —— 直接调用 pip/uv 以显示实时进度
+install_channel_deps() {
+  _runner="$1"
+  info "提取 channel 依赖列表..."
+  CHANNEL_DEPS=$("$_runner" -m scripts.list_channel_deps 2>/dev/null || true)
+  if [ -z "$CHANNEL_DEPS" ]; then
+    info "无 channel 依赖需要安装"
+    return 0
+  fi
+  info "channel 依赖: $CHANNEL_DEPS"
+  info "开始安装 channel 依赖 (进度如下)..."
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install $CHANNEL_DEPS || warn "部分 channel 依赖安装失败，不影响核心功能"
+  else
+    "$_runner" -m pip install --progress-bar bar $CHANNEL_DEPS || \
+      warn "部分 channel 依赖安装失败，不影响核心功能"
+  fi
+}
+
 # 优先使用 uv (更快的依赖管理)
 if command -v uv >/dev/null 2>&1; then
   info "检测到 uv，使用 uv 安装依赖..."
   uv sync --all-extras --dev
-  # 安装 channel 依赖
-  info "安装 channel 依赖..."
-  uv run --no-sync python -m scripts.install_channel_dependencies --all-channels || \
-    warn "部分 channel 依赖安装失败，不影响核心功能"
+  # 安装 channel 依赖 (直接用 uv pip install 显示进度)
+  install_channel_deps "uv run --no-sync python"
   RUNNER="uv run --no-sync python -m nanobot"
 else
   warn "未检测到 uv，使用 pip 安装 (建议安装 uv 加速: curl -LsSf https://astral.sh/uv/install.sh | sh)"
@@ -118,10 +135,8 @@ else
   "$PYTHON_BIN" -m pip install --upgrade pip
   "$PYTHON_BIN" -m pip install -e ".[dev]"
 
-  # 安装 channel 依赖
-  info "安装 channel 依赖..."
-  "$PYTHON_BIN" -m scripts.install_channel_dependencies --all-channels || \
-    warn "部分 channel 依赖安装失败，不影响核心功能"
+  # 安装 channel 依赖 (直接调用 pip 显示进度)
+  install_channel_deps "$PYTHON_BIN"
 
   RUNNER="$PYTHON_BIN -m nanobot"
 fi
