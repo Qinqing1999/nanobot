@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.channels.connect import ChannelConnectError, QueryParams, query_first
+from nanobot.channels.weixin.instances import DEFAULT_INSTANCE_ID, validate_instance_id
 from nanobot.config.loader import load_config
 
 if TYPE_CHECKING:
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class WeixinConnectSession:
     id: str
+    instance_id: str
+    instance_name: str
     qrcode_id: str
     qr_url: str
     channel: WeixinChannel
@@ -36,12 +39,18 @@ class WeixinConnectStore:
     async def handle(self, action: str, query: QueryParams) -> dict[str, Any]:
         """Handle one generic settings connection action."""
         if action == "start":
+            instance_id = (query_first(query, "instance_id") or "default").strip()
+            mode = (query_first(query, "mode") or "replace").strip()
             force = (query_first(query, "force") or "").strip().lower() in {
                 "1",
                 "true",
                 "yes",
             }
-            return await self.start(force=force)
+            return await self.start(force=force, instance_id=instance_id, mode=mode)
+
+        if action == "disconnect":
+            instance_id = (query_first(query, "instance_id") or "default").strip()
+            return await self.disconnect(instance_id=instance_id)
 
         session_id = (query_first(query, "session_id") or "").strip()
         if not session_id:
@@ -52,18 +61,27 @@ class WeixinConnectStore:
             return await self.cancel(session_id)
         raise ChannelConnectError(f"unsupported WeChat connect action: {action}", status=404)
 
-    async def start(self, *, force: bool = False) -> dict[str, Any]:
+    async def start(
+        self,
+        *,
+        force: bool = False,
+        instance_id: str = DEFAULT_INSTANCE_ID,
+        mode: str = "replace",
+    ) -> dict[str, Any]:
+        instance_id = _resolve_instance_id(instance_id, mode)
         await self._cleanup()
 
-        channel = self._build_channel()
+        channel = self._build_channel(instance_id=instance_id)
         if force:
             # Preserve the working account until a replacement scan succeeds.
             channel.connect_reset_pending_credentials()
         elif channel.connect_load_state():
             return {
                 "session_id": "",
+                "instance_id": instance_id,
                 "status": "succeeded",
                 "message": "WeChat is already connected.",
+                "account": channel.connect_account_id,
                 "interval_ms": 2000,
             }
 
@@ -81,6 +99,8 @@ class WeixinConnectStore:
         now_wall = time.time()
         self._sessions[session_id] = WeixinConnectSession(
             id=session_id,
+            instance_id=instance_id,
+            instance_name=_default_instance_name(instance_id),
             qrcode_id=qrcode_id,
             qr_url=qr_url,
             channel=channel,
@@ -114,6 +134,7 @@ class WeixinConnectStore:
             await self._close_channel(session.channel)
             return {
                 "session_id": session_id,
+                "instance_id": session.instance_id,
                 "status": "failed",
                 "message": f"WeChat QR login failed: {exc}",
             }
@@ -124,6 +145,7 @@ class WeixinConnectStore:
             if self._sessions.get(session_id) is not session:
                 return {
                     "session_id": session_id,
+                    "instance_id": session.instance_id,
                     "status": "cancelled",
                     "message": "WeChat login cancelled.",
                 }
@@ -133,18 +155,23 @@ class WeixinConnectStore:
                 await self._close_channel(session.channel)
                 return {
                     "session_id": session_id,
+                    "instance_id": session.instance_id,
                     "status": "failed",
                     "message": "WeChat confirmed the scan but returned no token.",
                 }
             base_url = str(status_payload.get("baseurl", "") or "")
-            session.channel.connect_commit_account(token=token, base_url=base_url)
+            ilink_user_id = str(status_payload.get("ilink_user_id", "") or "")
+            session.channel.connect_commit_account(
+                token=token, base_url=base_url, ilink_user_id=ilink_user_id
+            )
             self._sessions.pop(session_id, None)
             await self._close_channel(session.channel)
             return {
                 "session_id": session_id,
+                "instance_id": session.instance_id,
                 "status": "succeeded",
                 "message": "WeChat is connected.",
-                "account": str(status_payload.get("ilink_user_id", "") or ""),
+                "account": ilink_user_id,
             }
 
         if status == "scaned_but_redirect":
@@ -166,6 +193,7 @@ class WeixinConnectStore:
                 await self._close_channel(session.channel)
                 return {
                     "session_id": session_id,
+                    "instance_id": session.instance_id,
                     "status": "expired",
                     "message": "This WeChat QR code expired. Start again.",
                 }
@@ -178,6 +206,7 @@ class WeixinConnectStore:
                 await self._close_channel(session.channel)
                 return {
                     "session_id": session_id,
+                    "instance_id": session.instance_id,
                     "status": "failed",
                     "message": f"Could not refresh WeChat QR code: {exc}",
                 }
@@ -192,8 +221,27 @@ class WeixinConnectStore:
             await self._close_channel(session.channel)
         return {
             "session_id": session_id,
+            "instance_id": session.instance_id if session else DEFAULT_INSTANCE_ID,
             "status": "cancelled",
             "message": "WeChat login cancelled.",
+        }
+
+    async def disconnect(self, *, instance_id: str = DEFAULT_INSTANCE_ID) -> dict[str, Any]:
+        """Delete saved login state for a WeChat instance."""
+        try:
+            instance_id = validate_instance_id(instance_id or DEFAULT_INSTANCE_ID)
+        except ValueError as exc:
+            raise ChannelConnectError(str(exc), status=400) from exc
+
+        channel = self._build_channel(instance_id=instance_id)
+        cleared = channel.connect_clear_account()
+        await self._close_channel(channel)
+        return {
+            "session_id": "",
+            "instance_id": instance_id,
+            "status": "succeeded",
+            "message": "WeChat account disconnected." if cleared else "No WeChat account was connected.",
+            "cleared": cleared,
         }
 
     async def _cleanup(self) -> None:
@@ -209,7 +257,7 @@ class WeixinConnectStore:
                 await self._close_channel(session.channel)
 
     @staticmethod
-    def _build_channel() -> WeixinChannel:
+    def _build_channel(*, instance_id: str = DEFAULT_INSTANCE_ID) -> WeixinChannel:
         from nanobot.bus.queue import MessageBus
         from nanobot.channels.weixin.runtime import WeixinChannel
 
@@ -220,6 +268,9 @@ class WeixinConnectStore:
             config = dict(cast(dict[str, Any], section))
         else:
             config = {}
+
+        # Resolve instance-specific config from multi-instance section
+        config = _resolve_instance_config(config, instance_id)
         return WeixinChannel(config, MessageBus())
 
     @staticmethod
@@ -230,6 +281,7 @@ class WeixinConnectStore:
     def _start_payload(session: WeixinConnectSession) -> dict[str, Any]:
         return {
             "session_id": session.id,
+            "instance_id": session.instance_id,
             "status": "pending",
             "qr_url": session.qr_url,
             "interval_ms": 2000,
@@ -241,12 +293,62 @@ class WeixinConnectStore:
     def _pending_payload(session: WeixinConnectSession) -> dict[str, Any]:
         return {
             "session_id": session.id,
+            "instance_id": session.instance_id,
             "status": "pending",
             "qr_url": session.qr_url,
             "interval_ms": 2000,
             "expires_at_ms": int((session.created_wall + 600) * 1000),
             "message": "Waiting for WeChat scan.",
         }
+
+
+def _resolve_instance_id(instance_id: str, mode: str) -> str:
+    if mode == "create":
+        return f"assistant-{secrets.token_hex(3)}"
+    try:
+        return validate_instance_id(instance_id or DEFAULT_INSTANCE_ID)
+    except ValueError as exc:
+        raise ChannelConnectError(str(exc), status=400) from exc
+
+
+def _default_instance_name(instance_id: str) -> str:
+    return "nanobot" if instance_id == DEFAULT_INSTANCE_ID else f"nanobot {instance_id}"
+
+
+def _resolve_instance_config(
+    config: dict[str, Any],
+    instance_id: str,
+) -> dict[str, Any]:
+    """Extract and merge config for a specific instance from a multi-instance section."""
+    instances = config.get("instances")
+    if isinstance(instances, list):
+        # Find the matching instance
+        for instance in instances:
+            if not isinstance(instance, dict):
+                continue
+            iid = str(
+                instance.get("id")
+                or instance.get("instanceId")
+                or instance.get("instance_id")
+                or "default"
+            )
+            if iid == instance_id:
+                # Merge inherited (section-level) values with instance-specific values
+                inherited = {
+                    key: value
+                    for key, value in config.items()
+                    if key != "instances"
+                }
+                merged = dict(inherited)
+                merged.update(instance)
+                merged["instanceId"] = instance_id
+                return merged
+        # Instance not found — return defaults with instance_id set
+        return {"instanceId": instance_id, "enabled": True}
+    # Legacy flat config — ensure instance_id is set
+    config = dict(config)
+    config.setdefault("instanceId", instance_id)
+    return config
 
 
 __all__ = ["WeixinConnectStore"]

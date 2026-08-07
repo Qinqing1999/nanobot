@@ -650,6 +650,20 @@ export async function cancelChannelConnect(
   );
 }
 
+export async function disconnectChannelConnect(
+  token: string,
+  channel: string,
+  options: { instanceId?: string } = {},
+  base: string = "",
+): Promise<ChannelConnectPayload> {
+  const query = new URLSearchParams();
+  if (options.instanceId) query.set("instance_id", options.instanceId);
+  return request<ChannelConnectPayload>(
+    `${base}/api/settings/channels/${channel}/connect/disconnect?${query}`,
+    token,
+  );
+}
+
 export async function configureChannel(
   token: string,
   name: string,

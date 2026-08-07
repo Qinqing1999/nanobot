@@ -1,21 +1,31 @@
 import { useTranslation } from "react-i18next";
 
 import { channelTranslator } from "@/channel-plugins/i18n";
-import type { ChannelPluginConnectFlowProps } from "@/channel-plugins/types";
 import { ChannelQrConnectFlow } from "@/components/settings/channels/ChannelQrConnectFlow";
+import type { NanobotFeaturesPayload } from "@/lib/types";
 
 export function WeixinConnectFlow({
   token,
+  instanceId = "default",
+  mode = "replace",
   idleLabel,
   connectRequestId,
   onFeaturesUpdate,
-}: ChannelPluginConnectFlowProps) {
+}: {
+  token: string;
+  instanceId?: string;
+  mode?: "replace" | "create";
+  idleLabel?: string;
+  connectRequestId?: number;
+  onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
+}) {
   const { t } = useTranslation();
   const tx = channelTranslator(t, "weixin");
   return (
     <ChannelQrConnectFlow
       token={token}
       channelName="weixin"
+      startOptions={{ instanceId, mode }}
       idleLabel={idleLabel}
       connectRequestId={connectRequestId}
       forceOnRepeat

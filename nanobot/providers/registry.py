@@ -705,6 +705,39 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         detect_by_base_keyword="nvidia.com",
         default_api_base="https://integrate.api.nvidia.com/v1",
     ),
+    # Agnes AI: OpenAI-compatible omni-modal API (chat, image, video)
+    # Base URL: https://apihub.agnes-ai.com/v1
+    # Models: agnes-2.0-flash, agnes-2.5-flash, agnes-2.5-pro-alpha
+    # Supports thinking via chat_template_kwargs.enable_thinking
+    ProviderSpec(
+        name="agnes",
+        keywords=("agnes", "agnes-2"),
+        env_key="AGNES_API_KEY",
+        display_name="Agnes AI",
+        backend="openai_compat",
+        default_api_base="https://apihub.agnes-ai.com/v1",
+        thinking_style="enable_thinking",
+        builtin_models=(
+            ProviderModelSpec(
+                id="agnes-2.0-flash",
+                label="Agnes 2.0 Flash",
+                description="Fast omni-modal model with 512K context, image understanding and thinking mode.",
+                context_window=524288,
+            ),
+            ProviderModelSpec(
+                id="agnes-2.5-flash",
+                label="Agnes 2.5 Flash",
+                description="Latest fast omni-modal model with 512K context, image understanding and thinking mode.",
+                context_window=524288,
+            ),
+            ProviderModelSpec(
+                id="agnes-2.5-pro-alpha",
+                label="Agnes 2.5 Pro Alpha",
+                description="Frontier omni-modal model for complex reasoning tasks.",
+                context_window=524288,
+            ),
+        ),
+    ),
     # === Auxiliary (not a primary LLM provider) ============================
     # Groq: mainly used for Whisper voice transcription, also usable for LLM
     ProviderSpec(

@@ -1,10 +1,10 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
 import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
-import { WeixinConnectFlow } from "./WeixinConnectFlow";
+import { WeixinAssistantsPanel } from "./WeixinAssistantsPanel";
 
 export default {
-  ConnectFlow: WeixinConnectFlow,
+  Panel: WeixinAssistantsPanel,
   canConnectBeforeConfigured: true,
   aliases: {
     wechat: {},

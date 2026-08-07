@@ -122,13 +122,15 @@ def _has_downloadable_media_locator(media: dict[str, Any] | None) -> bool:
 class WeixinConfig(Base):
     """Personal WeChat channel configuration."""
 
+    instance_id: str = "default"
+    name: str = "nanobot"
     enabled: bool = False
     allow_from: list[str] = Field(default_factory=list)
     base_url: str = "https://ilinkai.weixin.qq.com"
     cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
     route_tag: str | int | None = None
     token: str = ""  # Manually set token, or obtained via QR login
-    state_dir: str = ""  # Default: ~/.nanobot/weixin/
+    state_dir: str = ""  # Default: ~/.nanobot/weixin/ (or ~/.nanobot/weixin/<instance_id>/)
     poll_timeout: int = DEFAULT_LONG_POLL_TIMEOUT_S  # seconds for long-poll
     # Default on: WeChat iLink has no native incremental delivery (send_delta is
     # buffered and the final answer is still sent in one shot), so streaming has
@@ -168,6 +170,7 @@ class WeixinChannel(BaseChannel):
         self._processed_ids: OrderedDict[str, None] = OrderedDict()
         self._state_dir: Path | None = None
         self._token: str = ""
+        self._ilink_user_id: str = ""
         self._poll_task: asyncio.Task[None] | None = None
         self._next_poll_timeout_s: int = DEFAULT_LONG_POLL_TIMEOUT_S
         self._session_pause_until: float = 0.0
@@ -190,7 +193,12 @@ class WeixinChannel(BaseChannel):
         if self.config.state_dir:
             d = Path(self.config.state_dir).expanduser()
         else:
-            d = get_runtime_subdir("weixin")
+            base = get_runtime_subdir("weixin")
+            instance_id = getattr(self.config, "instance_id", "default")
+            if instance_id and instance_id != "default":
+                d = base / instance_id
+            else:
+                d = base
         d.mkdir(parents=True, exist_ok=True)
         self._state_dir = d
         return d
@@ -203,6 +211,7 @@ class WeixinChannel(BaseChannel):
         try:
             data = cast(dict[str, Any], json.loads(state_file.read_text()))
             self._token = data.get("token", "")
+            self._ilink_user_id = str(data.get("ilink_user_id", "") or "")
             self._get_updates_buf = data.get("get_updates_buf", "")
             context_tokens = data.get("context_tokens", {})
             if isinstance(context_tokens, dict):
@@ -256,6 +265,7 @@ class WeixinChannel(BaseChannel):
                     return
             data = {
                 "token": self._token,
+                "ilink_user_id": self._ilink_user_id,
                 "get_updates_buf": self._get_updates_buf,
                 "context_tokens": self._context_tokens,
                 "typing_tickets": self._typing_tickets,
@@ -506,11 +516,31 @@ class WeixinChannel(BaseChannel):
     def connect_poll_error_is_retryable(self, err: Exception) -> bool:
         return self._is_retryable_qr_poll_error(err)
 
-    def connect_commit_account(self, *, token: str, base_url: str) -> None:
+    def connect_commit_account(self, *, token: str, base_url: str, ilink_user_id: str = "") -> None:
         self._token = token
+        if ilink_user_id:
+            self._ilink_user_id = ilink_user_id
         if base_url:
             self.config.base_url = base_url
         self._save_state(force=True)
+
+    def connect_clear_account(self) -> bool:
+        """Delete the saved account state file. Returns True if a file was deleted."""
+        self._token = ""
+        self._ilink_user_id = ""
+        self._get_updates_buf = ""
+        self._context_tokens = {}
+        self._typing_tickets = {}
+        state_file = self._get_state_dir() / "account.json"
+        if state_file.exists():
+            state_file.unlink()
+            return True
+        return False
+
+    @property
+    def connect_account_id(self) -> str:
+        """Return the saved ilink_user_id for this account, if any."""
+        return self._ilink_user_id
 
     async def connect_close_client(self) -> None:
         self._running = False

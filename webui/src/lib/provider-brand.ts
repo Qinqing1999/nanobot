@@ -149,6 +149,10 @@ export const PROVIDER_LABEL_ALIASES: Record<string, string> = {
 };
 
 const PROVIDER_BRANDS: Record<string, ProviderBrand> = {
+  // Agnes AI brand entry
+  agnes: brand("agnes-ai.com", "#6366F1", "AG", [
+    "https://www.agnes-ai.com/favicon.ico",
+  ]),
   aihubmix: brand("aihubmix.com", "#111827", "AH"),
   ant_ling: brand("ant-ling.com", "#7C3AED", "AL"),
   anthropic: brand("anthropic.com", "#D97757", "A"),
@@ -236,6 +240,7 @@ export function inferProviderFromModelName(modelName: string | null | undefined)
   if (/minimax/.test(normalized)) return "minimax";
   if (/mistral|mixtral/.test(normalized)) return "mistral";
   if (/skywork|skyclaw/.test(normalized)) return "skywork";
+  if (/agnes-(2|image)/.test(normalized)) return "agnes";
   if (/ring-/.test(normalized)) return "ant_ling";
   return null;
 }

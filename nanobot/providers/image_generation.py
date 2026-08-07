@@ -30,6 +30,9 @@ _OPENROUTER_ATTRIBUTION_HEADERS = {
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }
 _DEFAULT_TIMEOUT_S = 120.0
+_RETRY_MAX_ATTEMPTS = 3  # 1 initial + 2 retries
+_RETRY_BACKOFF_BASE = 2.0  # seconds: 2, 4
+_RETRY_STATUS_CODES = {429, 503}
 _IMAGE_DOWNLOAD_MAX_BYTES = 32 * 1024 * 1024
 _IMAGE_DOWNLOAD_MAX_REDIRECTS = 5
 _AIHUBMIX_TIMEOUT_S = 300.0
@@ -342,6 +345,53 @@ class ImageGenerationProvider(ABC):
         return kwargs
 
     async def _http_post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        body: dict[str, Any],
+        client: httpx.AsyncClient | None = None,
+    ) -> httpx.Response:
+        """POST with automatic retry on 429 / 503.
+
+        Retries up to ``_RETRY_MAX_ATTEMPTS`` times with exponential
+        backoff.  The retry is transparent to subclasses — they only
+        see the final response (or the last error if all attempts
+        fail).
+        """
+        return await self._http_post_with_retry(
+            url, headers=headers, body=body, client=client,
+        )
+
+    async def _http_post_with_retry(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        body: dict[str, Any],
+        client: httpx.AsyncClient | None = None,
+    ) -> httpx.Response:
+        last_response: httpx.Response | None = None
+        for attempt in range(_RETRY_MAX_ATTEMPTS):
+            response = await self._http_post_raw(url, headers=headers, body=body, client=client)
+            if response.status_code not in _RETRY_STATUS_CODES:
+                return response
+            last_response = response
+            if attempt < _RETRY_MAX_ATTEMPTS - 1:
+                delay = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                logger.warning(
+                    "{} image generation got HTTP {} (attempt {}/{}), retrying in {}s",
+                    self.provider_name,
+                    response.status_code,
+                    attempt + 1,
+                    _RETRY_MAX_ATTEMPTS,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        assert last_response is not None
+        return last_response
+
+    async def _http_post_raw(
         self,
         url: str,
         *,
@@ -2113,10 +2163,140 @@ class ModelScopeImageGenerationClient(ImageGenerationProvider):
 
 
 # ---------------------------------------------------------------------------
+# Agnes AI image generation
+# ---------------------------------------------------------------------------
+
+_AGNES_TIMEOUT_S = 300.0
+
+_AGNES_ASPECT_RATIO_SIZES = {
+    "1:1": "1024x1024",
+    "16:9": "1536x1024",
+    "9:16": "1024x1536",
+    "3:4": "1024x1536",
+    "4:3": "1536x1024",
+}
+
+
+class AgnesImageGenerationClient(ImageGenerationProvider):
+    """Async client for Agnes AI image generation.
+
+    Agnes AI provides an OpenAI-compatible Images API at
+    ``https://apihub.agnes-ai.com/v1/images/generations``.
+    The ``agnes-image-2.0-flash`` model supports text-to-image
+    generation and image editing via the ``image`` field.
+
+    Note: Agnes AI does **not** accept ``response_format``; the API
+    always returns ``data[].url`` pointing to a hosted PNG.
+    """
+
+    provider_name = "agnes"
+    model_options = ("agnes-image-2.0-flash",)
+    missing_key_message = (
+        "Agnes AI API key is not configured. Set providers.agnes.apiKey."
+    )
+    default_timeout = _AGNES_TIMEOUT_S
+
+    def _default_base_url(self) -> str:
+        return "https://apihub.agnes-ai.com/v1"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_images: list[str] | None = None,
+        aspect_ratio: str | None = None,
+        image_size: str | None = None,
+    ) -> GeneratedImageResponse:
+        if not self.api_key:
+            raise ImageGenerationError(self.missing_key_message)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            **self.extra_headers,
+        }
+
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+        }
+
+        size = _agnes_size(aspect_ratio, image_size)
+        if size:
+            body["size"] = size
+
+        refs = list(reference_images or [])
+        if refs:
+            image_refs = [image_path_to_data_url(path) for path in refs]
+            body["image"] = image_refs[0] if len(image_refs) == 1 else image_refs
+
+        body.update(self.extra_body)
+
+        url = f"{self.api_base}/images/generations"
+        client = self._client or httpx.AsyncClient(**self._http_client_kwargs())
+        try:
+            return await self._generate_with_client(
+                client,
+                url=url,
+                headers=headers,
+                body=body,
+            )
+        finally:
+            if self._client is None:
+                await client.aclose()
+
+    async def _generate_with_client(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+    ) -> GeneratedImageResponse:
+        try:
+            response = await self._http_post(url, headers=headers, body=body, client=client)
+        except httpx.TimeoutException as exc:
+            raise ImageGenerationError("Agnes AI image generation timed out") from exc
+        except httpx.RequestError as exc:
+            raise ImageGenerationError(f"Agnes AI image generation request failed: {exc}") from exc
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = _http_error_detail(response)
+            raise ImageGenerationError(
+                f"Agnes AI image generation failed (HTTP {response.status_code}): {detail}"
+            ) from exc
+
+        payload = _as_json_object(response.json()) or {}
+        # Agnes returns data[].url (hosted PNG) or data[].b64_json.
+        images = await _openai_images_from_payload(payload, proxy=self.proxy)
+
+        self._require_images(images, payload)
+
+        return GeneratedImageResponse(images=images, content="", raw=payload)
+
+
+def _agnes_size(
+    aspect_ratio: str | None,
+    image_size: str | None,
+) -> str:
+    """Resolve aspect ratio / image_size to an Agnes AI Images API size string."""
+    if image_size and "x" in image_size.lower():
+        return image_size
+    if aspect_ratio and aspect_ratio in _AGNES_ASPECT_RATIO_SIZES:
+        return _AGNES_ASPECT_RATIO_SIZES[aspect_ratio]
+    return "1024x1024"
+
+
+# ---------------------------------------------------------------------------
 # Provider registration
 # ---------------------------------------------------------------------------
 
 register_image_gen_provider(AIHubMixImageGenerationClient)
+register_image_gen_provider(AgnesImageGenerationClient)
 register_image_gen_provider(CodexImageGenerationClient)
 register_image_gen_provider(CustomImageGenerationClient)
 register_image_gen_provider(GeminiImageGenerationClient)

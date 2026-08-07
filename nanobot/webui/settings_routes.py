@@ -89,7 +89,7 @@ _OAUTH_CALLBACK_HEADER = "X-Nanobot-OAuth-Callback"
 _OAUTH_RESPONSE_HEADER_MAX_BYTES = 8 * 1024
 
 _SKIP_FIELD = object()
-_CHANNEL_CONNECT_ACTIONS = frozenset({"start", "poll", "cancel"})
+_CHANNEL_CONNECT_ACTIONS = frozenset({"start", "poll", "cancel", "disconnect"})
 
 
 def _channel_connect_route(path: str) -> tuple[str, str] | None:
