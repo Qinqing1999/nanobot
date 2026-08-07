@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { existsSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -59,15 +59,41 @@ export function gzipWebuiAssets(): Plugin {
 }
 
 /**
- * Remove every entry from the build output directory before Rollup writes new
- * assets.  This replaces Vite's built-in `emptyOutDir`, which calls
- * `fs.rmSync(entry, { recursive: true, force: true })` on each entry and can
- * throw `ENOTDIR` when a hosting environment places a file or symlink (e.g.
- * `.user.ini`) inside the directory — Node's internal `rimraf` may try to
- * `readdirSync` it as though it were a directory.
+ * Synchronously remove a filesystem entry without using `fs.rmSync`.
  *
- * By reading `Dirent` metadata first we can unlink files and symlinks directly
- * and only recurse into real directories, sidestepping the buggy code path.
+ * `fs.rmSync` (and Node's internal `rimraf`) can throw `ENOTDIR` on certain
+ * files and symlinks (e.g. `.user.ini` placed by a hosting environment)
+ * because it misidentifies the entry as a directory and calls `readdirSync`
+ * on it.  `Dirent` from `readdirSync({ withFileTypes: true })` is also
+ * unreliable on filesystems that report `DT_UNKNOWN` for `d_type`.
+ *
+ * Instead, try `unlinkSync` first — it succeeds for regular files, symlinks
+ * (without following them), FIFOs, sockets, and device nodes.  On Linux the
+ * only failure for an existing entry with the wrong type is `EISDIR`, which
+ * tells us it is a real directory that needs recursive removal.
+ */
+function removeEntrySync(fullPath: string): void {
+  try {
+    unlinkSync(fullPath);
+    return;
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    // Entry vanished between readdirSync and unlinkSync — nothing to do.
+    if (code === "ENOENT") return;
+    // Not a directory — rethrow the original error.
+    if (code !== "EISDIR") throw e;
+  }
+  // Entry is a directory: remove its contents, then the directory itself.
+  for (const name of readdirSync(fullPath)) {
+    removeEntrySync(path.join(fullPath, name));
+  }
+  rmdirSync(fullPath);
+}
+
+/**
+ * Remove every entry from the build output directory before Rollup writes new
+ * assets.  Replaces Vite's built-in `emptyOutDir` to avoid `ENOTDIR` errors
+ * caused by `fs.rmSync` on files/symlinks placed by hosting environments.
  */
 function cleanWebuiOutDir(): Plugin {
   return {
@@ -76,19 +102,8 @@ function cleanWebuiOutDir(): Plugin {
     buildStart() {
       const outDir = path.resolve(__dirname, "../nanobot/web/dist");
       if (!existsSync(outDir)) return;
-      for (const entry of readdirSync(outDir, { withFileTypes: true })) {
-        const fullPath = path.join(outDir, entry.name);
-        // Dirent methods do NOT follow symlinks, so isSymbolicLink() correctly
-        // identifies symlinks without dereferencing them.
-        if (entry.isDirectory() && !entry.isSymbolicLink()) {
-          rmSync(fullPath, { recursive: true, force: true });
-        } else {
-          try {
-            unlinkSync(fullPath);
-          } catch {
-            rmSync(fullPath, { recursive: true, force: true });
-          }
-        }
+      for (const name of readdirSync(outDir)) {
+        removeEntrySync(path.join(outDir, name));
       }
     },
   };
