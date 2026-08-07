@@ -75,6 +75,11 @@ export function gzipWebuiAssets(): Plugin {
  *   • symlink  → `unlinkSync` (removes the link itself, not the target)
  *   • directory → recurse into children, then `rmdirSync`
  *   • file/other → `unlinkSync`
+ *
+ * Host-managed entries that we lack permission to remove (e.g. `.user.ini`
+ * owned by root, or marked immutable) are silently skipped.  Vite overwrites
+ * the files it generates, so a leftover host file does not interfere with the
+ * build — it simply coexists with the new output.
  */
 function removeEntrySync(fullPath: string): void {
   let st;
@@ -85,15 +90,28 @@ function removeEntrySync(fullPath: string): void {
     if ((e as { code?: string }).code === "ENOENT") return;
     throw e;
   }
-  if (st.isSymbolicLink()) {
-    unlinkSync(fullPath);
-  } else if (st.isDirectory()) {
+  if (st.isSymbolicLink() || !st.isDirectory()) {
+    // File, symlink, FIFO, socket, or device node.
+    try {
+      unlinkSync(fullPath);
+    } catch (e) {
+      // Skip host-managed entries we lack permission to remove (e.g.
+      // `.user.ini` owned by root or marked immutable).
+      const code = (e as { code?: string }).code;
+      if (code !== "ENOENT" && code !== "EPERM" && code !== "EACCES") throw e;
+    }
+  } else {
+    // Directory: remove contents recursively, then the directory itself.
     for (const name of readdirSync(fullPath)) {
       removeEntrySync(path.join(fullPath, name));
     }
-    rmdirSync(fullPath);
-  } else {
-    unlinkSync(fullPath);
+    try {
+      rmdirSync(fullPath);
+    } catch (e) {
+      // Skip if not empty (a skipped host file remains) or permission denied.
+      const code = (e as { code?: string }).code;
+      if (code !== "ENOTEMPTY" && code !== "EPERM" && code !== "EACCES") throw e;
+    }
   }
 }
 
