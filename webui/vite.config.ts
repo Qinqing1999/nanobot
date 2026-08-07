@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -54,6 +54,42 @@ export function gzipWebuiAssets(): Plugin {
         throw new Error("WebUI gzip build requires a Rollup output directory");
       }
       writeCompressedWebuiAssets(outputDir, Object.keys(bundle));
+    },
+  };
+}
+
+/**
+ * Remove every entry from the build output directory before Rollup writes new
+ * assets.  This replaces Vite's built-in `emptyOutDir`, which calls
+ * `fs.rmSync(entry, { recursive: true, force: true })` on each entry and can
+ * throw `ENOTDIR` when a hosting environment places a file or symlink (e.g.
+ * `.user.ini`) inside the directory — Node's internal `rimraf` may try to
+ * `readdirSync` it as though it were a directory.
+ *
+ * By reading `Dirent` metadata first we can unlink files and symlinks directly
+ * and only recurse into real directories, sidestepping the buggy code path.
+ */
+function cleanWebuiOutDir(): Plugin {
+  return {
+    name: "nanobot-clean-webui-out-dir",
+    apply: "build",
+    buildStart() {
+      const outDir = path.resolve(__dirname, "../nanobot/web/dist");
+      if (!existsSync(outDir)) return;
+      for (const entry of readdirSync(outDir, { withFileTypes: true })) {
+        const fullPath = path.join(outDir, entry.name);
+        // Dirent methods do NOT follow symlinks, so isSymbolicLink() correctly
+        // identifies symlinks without dereferencing them.
+        if (entry.isDirectory() && !entry.isSymbolicLink()) {
+          rmSync(fullPath, { recursive: true, force: true });
+        } else {
+          try {
+            unlinkSync(fullPath);
+          } catch {
+            rmSync(fullPath, { recursive: true, force: true });
+          }
+        }
+      }
     },
   };
 }
@@ -112,7 +148,7 @@ export default defineConfig(({ mode }) => {
   const hmrPath = "/__nanobot_vite_hmr";
 
   return {
-    plugins: [react(), guardWebuiEntryChunk(), gzipWebuiAssets()],
+    plugins: [react(), guardWebuiEntryChunk(), cleanWebuiOutDir(), gzipWebuiAssets()],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
@@ -129,7 +165,10 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: path.resolve(__dirname, "../nanobot/web/dist"),
-      emptyOutDir: true,
+      // Custom `cleanWebuiOutDir` plugin handles output-dir cleaning instead of
+      // Vite's built-in `emptyOutDir` to avoid ENOTDIR errors on files/symlinks
+      // placed by hosting environments (e.g. `.user.ini`).
+      emptyOutDir: false,
       sourcemap: false,
       rollupOptions: {
         output: {
