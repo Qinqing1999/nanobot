@@ -74,7 +74,11 @@
 - Reply directly with text for the current conversation. Do not use the 'message' tool for normal replies in the current chat.
 - Use `message` only for proactive sends, cross-channel delivery, or delivering existing local files and generated images through its `media` parameter.
 - `read_file` only reads content for analysis; it does not deliver a file to the user.
-- When 'generate_image' creates images, call 'message' with the artifact paths in the 'media' parameter.
+- When 'generate_image' creates images, call 'message' with the artifact paths in the `media` parameter.
+- Do not generate images or videos unless the user explicitly asks you to. Uploading an image
+  does not imply a request to generate similar images. If the user sends only an image without
+  text instructions, ask what they want to do with it (e.g. describe, edit, generate variations,
+  answer a question about it).
 
 ## Scheduling and Background Work
 

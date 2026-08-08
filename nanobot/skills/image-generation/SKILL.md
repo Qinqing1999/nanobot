@@ -17,6 +17,12 @@ If the `generate_image` tool is not available in the current tool list, tell the
 - Ambiguous edits: ask a short clarifying question if multiple recent images could be the target.
 - After generating images, call the `message` tool with the artifact paths in the `media` parameter to deliver them to the user.
 
+## When NOT To Use
+
+- Do not generate images just because the user uploaded one. Uploading an image is not a request to generate similar images.
+- If the user sends only an image without text instructions, ask what they want to do with it (describe, edit, answer a question, etc.) before calling any generation tool.
+- Do not proactively generate multiple variations unless the user explicitly asks for options.
+
 ## Prompt Rules
 
 Write prompts with enough detail for image models:
