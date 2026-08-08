@@ -1,41 +1,44 @@
-"""Tool hint formatting for concise, human-readable tool call display."""
+"""Tool hint formatting for concise, human-readable tool call display.
+
+Hints shown to users are **generic descriptions** (e.g. "执行命令", "读取文件")
+without raw arguments, paths, or command text.  This keeps the progress UI
+clean and avoids leaking diagnostic commands to end users.
+"""
 
 from __future__ import annotations
 
-import re
-from typing import cast
-
 from nanobot.providers.base import ToolCallRequest
-from nanobot.utils.path import abbreviate_path
 
-# Registry: tool_name -> (key_args, template, is_path, is_command)
-_TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
-    "read_file":  (["path", "file_path"],              "read {}",     True,  False),
-    "write_file": (["path", "file_path"],              "write {}",    True,  False),
-    "edit":       (["file_path", "path"],              "edit {}",     True,  False),
-    "find_files": (["query", "glob", "path"],           "find {}",     False, False),
-    "grep":       (["pattern"],                        'grep "{}"',   False, False),
-    "exec":       (["command"],                        "$ {}",        False, True),
-    "list_exec_sessions": ([],                          "exec sessions", False, False),
-    "web_search": (["query"],                          'search "{}"', False, False),
-    "x_search":   (["query"],                        'search X "{}"', False, False),
-    "web_fetch":  (["url"],                            "fetch {}",    True,  False),
-    "list_dir":   (["path"],                           "ls {}",       True,  False),
+# Registry: tool_name -> user-facing label (no arguments exposed).
+_TOOL_LABELS: dict[str, str] = {
+    "read_file":           "读取文件",
+    "write_file":          "写入文件",
+    "edit":                "编辑文件",
+    "edit_file":           "编辑文件",
+    "apply_patch":         "应用补丁",
+    "find_files":          "查找文件",
+    "grep":                "搜索内容",
+    "exec":                "执行命令",
+    "list_exec_sessions":  "执行会话",
+    "poll_exec_session":   "轮询会话",
+    "write_stdin":         "写入输入",
+    "web_search":          "搜索网络",
+    "x_search":            "搜索 X",
+    "web_fetch":           "获取网页",
+    "list_dir":            "列出目录",
+    "generate_image":      "生成图片",
+    "generate_video":      "生成视频",
+    "check_video":         "查询视频",
+    "message":             "发送消息",
+    "create_goal":         "创建目标",
+    "update_goal":         "更新目标",
+    "my":                  "检查状态",
+    "spawn_subagent":      "启动子代理",
 }
-
-# Matches file paths embedded in shell commands, including quoted paths with spaces.
-_PATH_IN_CMD_RE = re.compile(
-    r'"(?P<double>(?:[A-Za-z]:[/\\]|~/|/)[^"]+)"'
-    r"|'(?P<single>(?:[A-Za-z]:[/\\]|~/|/)[^']+)'"
-    r"|(?P<bare>(?:[A-Za-z]:[/\\]|~/|(?<=\s)/)[^\s;&|<>\"']+)"
-)
-
-
-ToolFormat = tuple[list[str], str, bool, bool]
 
 
 def format_tool_hints(tool_calls: list[ToolCallRequest], max_length: int = 40) -> str:
-    """Format tool calls as concise hints with smart abbreviation."""
+    """Format tool calls as concise, user-facing labels without raw arguments."""
     if not tool_calls:
         return ""
 
@@ -43,16 +46,14 @@ def format_tool_hints(tool_calls: list[ToolCallRequest], max_length: int = 40) -
     for tc in tool_calls:
         name = getattr(tc, "name", None)
         if not isinstance(name, str) or not name:
-            # Degenerate/malformed tool call (e.g. a model emits name=None);
-            # skip it instead of raising AttributeError on the whole turn.
             continue
-        fmt = _TOOL_FORMATS.get(name)
-        if fmt:
-            formatted.append(_fmt_known(tc, fmt, max_length))
+        label = _TOOL_LABELS.get(name)
+        if label:
+            formatted.append(label)
         elif name.startswith("mcp_"):
-            formatted.append(_fmt_mcp(tc, max_length))
+            formatted.append(_fmt_mcp(name))
         else:
-            formatted.append(_fmt_fallback(tc, max_length))
+            formatted.append(name)
 
     hints: list[tuple[str, int]] = []
     for hint in formatted:
@@ -66,67 +67,8 @@ def format_tool_hints(tool_calls: list[ToolCallRequest], max_length: int = 40) -
     )
 
 
-def _get_args(tc: ToolCallRequest) -> dict[str, object]:
-    """Extract args dict from tc.arguments, handling list/dict/None/empty."""
-    if tc.arguments is None:
-        return {}
-    arguments = tc.arguments
-    if isinstance(arguments, list):
-        argument_list = cast(list[object], arguments)
-        first_argument = argument_list[0] if argument_list else None
-        return cast(dict[str, object], first_argument) if isinstance(first_argument, dict) else {}
-    if isinstance(arguments, dict):
-        return cast(dict[str, object], arguments)
-    return {}
-
-
-def _extract_arg(tc: ToolCallRequest, key_args: list[str]) -> str | None:
-    """Extract the first available value from preferred key names."""
-    args = _get_args(tc)
-    for key in key_args:
-        val = args.get(key)
-        if isinstance(val, str) and val:
-            return val
-    for val in args.values():
-        if isinstance(val, str) and val:
-            return val
-    return None
-
-
-def _fmt_known(tc: ToolCallRequest, fmt: ToolFormat, max_length: int = 40) -> str:
-    """Format a registered tool using its template."""
-    if not fmt[0] and "{}" not in fmt[1]:
-        return fmt[1]
-    val = _extract_arg(tc, fmt[0])
-    if val is None:
-        return tc.name
-    if fmt[2]:  # is_path
-        val = abbreviate_path(val, max_len=max_length)
-    elif fmt[3]:  # is_command
-        val = _abbreviate_command(val, max_len=max_length)
-    return fmt[1].format(val)
-
-
-def _abbreviate_command(cmd: str, max_len: int = 40) -> str:
-    """Abbreviate paths in a command string, then truncate."""
-    path_max = max(max_len // 2, 25)
-
-    def _replace_path(match: re.Match[str]) -> str:
-        if match.group("double") is not None:
-            return f'"{abbreviate_path(match.group("double"), max_len=path_max)}"'
-        if match.group("single") is not None:
-            return f"'{abbreviate_path(match.group('single'), max_len=path_max)}'"
-        return abbreviate_path(match.group("bare"), max_len=path_max)
-
-    abbreviated = _PATH_IN_CMD_RE.sub(_replace_path, cmd)
-    if len(abbreviated) <= max_len:
-        return abbreviated
-    return abbreviated[:max_len - 1] + "\u2026"
-
-
-def _fmt_mcp(tc: ToolCallRequest, max_length: int = 40) -> str:
-    """Format MCP tool as server::tool."""
-    name = tc.name
+def _fmt_mcp(name: str) -> str:
+    """Format MCP tool as server::tool (no arguments)."""
     if "__" in name:
         parts = name.split("__", 1)
         server = parts[0].removeprefix("mcp_")
@@ -138,17 +80,4 @@ def _fmt_mcp(tc: ToolCallRequest, max_length: int = 40) -> str:
         tool = parts[1] if len(parts) > 1 else ""
     if not tool:
         return name
-    args = _get_args(tc)
-    val = next((v for v in args.values() if isinstance(v, str) and v), None)
-    if val is None:
-        return f"{server}::{tool}"
-    return f'{server}::{tool}("{abbreviate_path(val, max_length)}")'
-
-
-def _fmt_fallback(tc: ToolCallRequest, max_length: int = 40) -> str:
-    """Original formatting logic for unregistered tools."""
-    args = _get_args(tc)
-    val = next(iter(args.values()), None)
-    if not isinstance(val, str):
-        return tc.name
-    return f'{tc.name}("{abbreviate_path(val, max_length)}")' if len(val) > max_length else f'{tc.name}("{val}")'
+    return f"{server}::{tool}"

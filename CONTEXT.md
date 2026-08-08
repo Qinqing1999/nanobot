@@ -33,11 +33,11 @@ _Avoid_: 定时器、cron 任务
 _Avoid_: 回调、webhook
 
 **制品通知 (Artifact Notification)**:
-当文件上传或生成后，通道层或工具层通过 `OutboundMessage` 向用户发送的一条系统消息，包含制品 ID、类型、文件名和时间戳。与 LLM 回复独立，用户在 LLM 处理完成前即可看到 ID。
+当文件上传或生成后，通道层或工具层通过 `OutboundMessage` 向用户发送的一条系统消息，包含制品 ID、类型、文件名。采用 Markdown 格式（`**KEY**: `VALUE``）。与 LLM 回复独立，用户在 LLM 处理完成前即可看到 ID。
 _Avoid_: 制品事件（Artifact Event，指 WebSocket 专用事件）、制品回执
 
 **进度提示 (Progress Hint)**:
-在工具执行期间或后台任务运行期间，向用户频道推送的状态提示消息。视频生成采用"开始 → 50% → 完成"三阶段推送。
+在工具执行期间或后台任务运行期间，向用户频道推送的状态提示消息。视频生成采用"开始 → 50% → 完成"三阶段推送。工具提示仅显示面向用户的通用描述（如"执行命令"、"读取文件"），不暴露原始命令、路径或参数。
 _Avoid_: 日志、调试输出
 
 **制品引用解析 (Artifact Reference Resolution)**:

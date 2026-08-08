@@ -143,6 +143,8 @@ class ArtifactRegistry:
 def format_artifact_notification(artifacts: list[dict[str, str]]) -> str:
     """Format artifact registration info as a user-facing notification message.
 
+    Uses markdown formatting: ``**KEY**: VALUE``
+
     Args:
         artifacts: List of dicts with keys ``id``, ``type``, ``filename``.
 
@@ -150,13 +152,11 @@ def format_artifact_notification(artifacts: list[dict[str, str]]) -> str:
         A multi-line string like::
 
             📎 已注册 2 个制品:
-              1001 [图片] cat.png | 10:01:03
-              1002 [图片] dog.png | 10:01:03
+              **制品 ID**: `1001` | **类型**: `图片` | **文件名**: `cat.png`
+              **制品 ID**: `1002` | **类型**: `图片` | **文件名**: `dog.png`
     """
     if not artifacts:
         return ""
-    now = datetime.now().astimezone()
-    timestamp = now.strftime("%H:%M:%S")
     count = len(artifacts)
     header = f"📎 已注册 {count} 个制品:"
     lines = [header]
@@ -165,7 +165,9 @@ def format_artifact_notification(artifacts: list[dict[str, str]]) -> str:
         art_type = a.get("type", "document")
         label = TYPE_LABELS_CN.get(art_type, art_type)
         filename = a.get("filename", "")
-        lines.append(f"  {art_id} [{label}] {filename} | {timestamp}")
+        lines.append(
+            f"  **制品 ID**: `{art_id}` | **类型**: `{label}` | **文件名**: `{filename}`"
+        )
     return "\n".join(lines)
 
 

@@ -283,12 +283,13 @@ class VideoGenerationTool(Tool):
                 chat_id=chat_id,
                 content=(
                     f"🎬 视频正在生成中...\n"
-                    f"任务 ID: {task.video_id}\n"
+                    f"**任务 ID**: `{task.video_id}`\n"
                     f"预计需要 1-5 分钟，完成后会自动发送给你。"
                 ),
             ))
 
-        # Start background polling
+        # Start background polling — always wrap in _safe_poll so exceptions
+        # are logged and the user gets a notification instead of silence.
         coro = self._poll_and_deliver(
             video_id=task.video_id,
             client=client,
@@ -297,10 +298,11 @@ class VideoGenerationTool(Tool):
             chat_id=chat_id,
             session_key=session_key,
         )
+        safe_coro = self._safe_poll(coro)
         if self._schedule_background is not None:
-            self._schedule_background(coro)
+            self._schedule_background(safe_coro)
         else:
-            asyncio.create_task(self._safe_poll(coro))
+            asyncio.create_task(safe_coro)
 
         return (
             f"视频任务已创建。任务 ID: {task.video_id}\n"
@@ -333,7 +335,7 @@ class VideoGenerationTool(Tool):
         start_time = time.monotonic()
         fifty_percent_notified = False
         consecutive_errors = 0
-        _MAX_CONSECUTIVE_ERRORS = 10
+        max_consecutive_errors = 10
 
         try:
             while True:
@@ -345,7 +347,7 @@ class VideoGenerationTool(Tool):
                             chat_id=chat_id,
                             content=(
                                 f"⚠️ 视频生成超时（{int(_VIDEO_POLL_MAX_DURATION_S)}秒），请稍后重试。\n"
-                                f"任务 ID: {video_id}"
+                                f"**任务 ID**: `{video_id}`"
                             ),
                         ))
                     return
@@ -367,14 +369,14 @@ class VideoGenerationTool(Tool):
                             "Video poll rate-limited (429) for {}, backing off {}s (attempt {})",
                             video_id, backoff, consecutive_errors,
                         )
-                        if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                        if consecutive_errors >= max_consecutive_errors:
                             if self.bus:
                                 await self.bus.publish_outbound(OutboundMessage(
                                     channel=channel,
                                     chat_id=chat_id,
                                     content=(
                                         f"⚠️ 视频状态查询频繁被限流，后台轮询已停止。\n"
-                                        f"任务 ID: {video_id}\n"
+                                        f"**任务 ID**: `{video_id}`\n"
                                         f"视频可能已生成完成，请用 /check_video {video_id} 手动查询。"
                                     ),
                                 ))
@@ -386,14 +388,14 @@ class VideoGenerationTool(Tool):
                 except httpx.HTTPError as exc:
                     consecutive_errors += 1
                     logger.warning("Video poll network error for {}: {}", video_id, exc)
-                    if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                    if consecutive_errors >= max_consecutive_errors:
                         if self.bus:
                             await self.bus.publish_outbound(OutboundMessage(
                                 channel=channel,
                                 chat_id=chat_id,
                                 content=(
                                     f"⚠️ 视频状态查询持续失败，后台轮询已停止。\n"
-                                    f"任务 ID: {video_id}\n"
+                                    f"**任务 ID**: `{video_id}`\n"
                                     f"请用 /check_video {video_id} 手动查询。"
                                 ),
                             ))
@@ -411,7 +413,9 @@ class VideoGenerationTool(Tool):
                         ))
 
                 if status.status == "completed" and status.video_url:
-                    # Download video
+                    # Download, store, register, and push — each step in its
+                    # own try/except so a failure still notifies the user
+                    # instead of silently killing the background task.
                     try:
                         video_bytes = await self._download_video(status.video_url)
                     except Exception as exc:
@@ -422,48 +426,62 @@ class VideoGenerationTool(Tool):
                                 chat_id=chat_id,
                                 content=(
                                     f"✅ 视频已生成完成，但下载失败。\n"
-                                    f"任务 ID: {video_id}\n"
-                                    f"视频 URL: {status.video_url}\n"
+                                    f"**任务 ID**: `{video_id}`\n"
                                     f"错误: {exc}"
                                 ),
                             ))
                         return
-                    # Store as artifact
-                    artifact = store_generated_video_artifact(
-                        video_bytes,
-                        prompt=prompt,
-                        model=self.config.model,
-                        save_dir=self.config.save_dir,
-                        provider=self.config.provider,
-                    )
-                    # Register in session artifact registry
-                    sessions = self.sessions
-                    if sessions is not None:
-                        session = sessions.get_or_create(session_key)
-                        entry = session.artifact_registry.register(
-                            type="video",
-                            path=artifact["path"],
-                            filename=Path(artifact["path"]).name,
-                            mime=artifact["mime"],
-                            source="generated",
+                    try:
+                        artifact = store_generated_video_artifact(
+                            video_bytes,
                             prompt=prompt,
                             model=self.config.model,
+                            save_dir=self.config.save_dir,
+                            provider=self.config.provider,
                         )
-                        artifact["artifact_id"] = entry.id
-                        session.sync_artifact_registry()
-                        sessions.save(session)
+                    except Exception as exc:
+                        logger.error("Video artifact storage failed for {}: {}", video_id, exc)
+                        if self.bus:
+                            await self.bus.publish_outbound(OutboundMessage(
+                                channel=channel,
+                                chat_id=chat_id,
+                                content=(
+                                    f"✅ 视频已生成完成，但保存失败。\n"
+                                    f"**任务 ID**: `{video_id}`\n"
+                                    f"错误: {exc}"
+                                ),
+                            ))
+                        return
+                    artifact_id = ""
+                    try:
+                        sessions = self.sessions
+                        if sessions is not None:
+                            session = sessions.get_or_create(session_key)
+                            entry = session.artifact_registry.register(
+                                type="video",
+                                path=artifact["path"],
+                                filename=Path(artifact["path"]).name,
+                                mime=artifact["mime"],
+                                source="generated",
+                                prompt=prompt,
+                                model=self.config.model,
+                            )
+                            artifact_id = entry.id
+                            session.sync_artifact_registry()
+                            sessions.save(session)
+                    except Exception as exc:
+                        logger.error("Video artifact registration failed for {}: {}", video_id, exc)
 
                     # Push video file to user
                     if self.bus:
-                        artifact_id = artifact.get("artifact_id", "")
                         await self.bus.publish_outbound(OutboundMessage(
                             channel=channel,
                             chat_id=chat_id,
                             content=(
                                 f"✅ 视频生成完成！\n"
-                                f"时长: {status.seconds}秒\n"
-                                f"分辨率: {status.size}\n"
-                                f"制品 ID: {artifact_id}"
+                                f"**时长**: `{status.seconds}秒`\n"
+                                f"**分辨率**: `{status.size}`\n"
+                                f"**制品 ID**: `{artifact_id}`"
                             ),
                             media=[artifact["path"]],
                         ))
@@ -476,7 +494,7 @@ class VideoGenerationTool(Tool):
                             chat_id=chat_id,
                             content=(
                                 f"❌ 视频生成失败。\n"
-                                f"任务 ID: {video_id}\n"
+                                f"**任务 ID**: `{video_id}`\n"
                                 f"错误: {status.error or '未知错误'}"
                             ),
                         ))
@@ -578,8 +596,6 @@ class CheckVideoTool(Tool):
                 f"状态: {status.status}\n"
                 f"进度: {status.progress}%"
             )
-            if status.video_url:
-                result += f"\n视频 URL: {status.video_url}"
             if status.error:
                 result += f"\n错误: {status.error}"
 
@@ -599,6 +615,8 @@ class CheckVideoTool(Tool):
                     size=status.size,
                 )
                 result += "\n✅ 视频已下载并推送给用户。"
+            elif status.status == "completed" and not status.video_url:
+                result += "\n⚠️ 视频已完成但未获取到下载链接。"
 
             return result
         except VideoGenerationError as exc:
@@ -606,7 +624,7 @@ class CheckVideoTool(Tool):
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 return ToolResult.error(
-                    f"Error: 查询过于频繁，API 返回 429 Too Many Requests。请等待 10 秒后再试。"
+                    "Error: 查询过于频繁，API 返回 429 Too Many Requests。请等待 10 秒后再试。"
                 )
             return ToolResult.error(f"Error: HTTP {exc.response.status_code}: {exc}")
         except httpx.HTTPError as exc:
@@ -635,7 +653,11 @@ class CheckVideoTool(Tool):
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=req_ctx.channel,
                     chat_id=req_ctx.chat_id,
-                    content=f"✅ 视频已生成完成，但下载失败。\n视频 URL: {video_url}\n错误: {exc}",
+                    content=(
+                        f"✅ 视频已生成完成，但下载失败。\n"
+                        f"**任务 ID**: `{video_id}`\n"
+                        f"错误: {exc}"
+                    ),
                 ))
             return
 
@@ -672,9 +694,9 @@ class CheckVideoTool(Tool):
                 chat_id=req_ctx.chat_id,
                 content=(
                     f"✅ 视频生成完成！\n"
-                    f"时长: {seconds}秒\n"
-                    f"分辨率: {size}\n"
-                    f"制品 ID: {artifact_id}"
+                    f"**时长**: `{seconds}秒`\n"
+                    f"**分辨率**: `{size}`\n"
+                    f"**制品 ID**: `{artifact_id}`"
                 ),
                 media=[artifact["path"]],
             ))
