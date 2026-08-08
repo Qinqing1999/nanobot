@@ -1,8 +1,10 @@
 """Tool hint formatting for concise, human-readable tool call display.
 
-Hints shown to users are **generic descriptions** (e.g. "执行命令", "读取文件")
-without raw arguments, paths, or command text.  This keeps the progress UI
-clean and avoids leaking diagnostic commands to end users.
+.. deprecated::
+    Tool hint text labels (e.g. "执行命令", "读取文件") are no longer sent
+    to users. ``AgentProgressHook`` now passes an empty string as hint text
+    and relies on structured ``tool_events`` for WebUI activity cards.
+    This module is kept for reference and potential re-enablement.
 """
 
 from __future__ import annotations

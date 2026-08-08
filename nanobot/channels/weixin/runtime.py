@@ -1270,6 +1270,8 @@ class WeixinChannel(BaseChannel):
         if progress_event and progress_event.tool_hint:
             if not self.send_tool_hints:
                 return
+            if not (msg.content or "").strip():
+                return
             self._pending_tool_hints.setdefault(msg.chat_id, []).append(msg.content)
             self.logger.debug(
                 "Buffered tool hint for {} (count={})",

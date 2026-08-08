@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.providers.base import ToolCallRequest
 from nanobot.utils.helpers import IncrementalThinkExtractor, strip_think
 from nanobot.utils.progress_events import (
     build_tool_event_finish_payloads,
@@ -17,7 +16,6 @@ from nanobot.utils.progress_events import (
     invoke_on_progress,
     on_progress_accepts_tool_events,
 )
-from nanobot.utils.tool_hints import format_tool_hints
 
 
 class AgentProgressHook(AgentHook):
@@ -52,9 +50,6 @@ class AgentProgressHook(AgentHook):
         if not text:
             return None
         return strip_think(text) or None
-
-    def _tool_hint(self, tool_calls: list[Any]) -> str:
-        return format_tool_hints(tool_calls, max_length=self._tool_hint_max_length)
 
     @staticmethod
     def _on_progress_accepts(cb: Callable[..., Any], name: str) -> bool:
@@ -137,11 +132,11 @@ class AgentProgressHook(AgentHook):
         }
         if phase == "start":
             await self.emit_reasoning_end()
-            tool_call = ToolCallRequest(id=str(call_id), name=name, arguments=arguments)
-            tool_hint = self._strip_think(self._tool_hint([tool_call])) or name
+            # Tool hint text is intentionally empty — only structured
+            # tool_events are sent for WebUI activity card rendering.
             await invoke_on_progress(
                 self._on_progress,
-                tool_hint,
+                "",
                 tool_hint=True,
                 tool_events=[payload],
             )
@@ -165,11 +160,12 @@ class AgentProgressHook(AgentHook):
                 thought = self._strip_think(context.response.content if context.response else None)
                 if thought:
                     await self._on_progress(thought)
-            tool_hint = self._strip_think(self._tool_hint(context.tool_calls))
+            # Tool hint text is intentionally empty — only structured
+            # tool_events are sent for WebUI activity card rendering.
             tool_events = [build_tool_event_start_payload(tc) for tc in context.tool_calls]
             await invoke_on_progress(
                 self._on_progress,
-                cast(str, tool_hint),
+                "",
                 tool_hint=True,
                 tool_events=tool_events,
             )

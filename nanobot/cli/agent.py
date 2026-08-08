@@ -142,6 +142,8 @@ def agent(
                 return
             if ch and not tool_hint and not ch.send_progress:
                 return
+            if tool_hint and not content:
+                return
             cli_terminal._print_cli_progress_line(content, _thinking, renderer)
 
         return _cli_progress

@@ -399,6 +399,8 @@ async def _maybe_print_interactive_progress(
         return True
     if channels_config and not is_tool_hint and not channels_config.send_progress:
         return True
+    if is_tool_hint and not msg.content:
+        return True
 
     await _print_interactive_progress_line(msg.content, thinking, renderer)
     return True

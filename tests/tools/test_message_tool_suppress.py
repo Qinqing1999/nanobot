@@ -151,7 +151,7 @@ class TestMessageToolSuppressLogic:
         assert final_content == "Done"
         assert progress == [
             ("Visible", False),
-            ('read foo.txt', True),
+            ('', True),
         ]
 
 class TestMessageToolTurnTracking:
