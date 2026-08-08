@@ -399,6 +399,9 @@ class AgentLoop:
         self._runtime_context_providers: list[RuntimeContextProvider] = []
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        # Per-chat session index tracker for multi-session support.
+        # Keyed by base session key (channel:chat_id) → current session index.
+        self._session_indices: dict[str, int] = {}
         self._close_mcp_lock = asyncio.Lock()
         self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
@@ -812,6 +815,18 @@ class AgentLoop:
         """Return the session key used for task routing and mid-turn injections."""
         if self._unified_session and not msg.session_key_override:
             return UNIFIED_SESSION_KEY
+        # If the channel already set a session_key_override with an index suffix
+        # (e.g. from a previous /switch), respect it.
+        if msg.session_key_override:
+            return msg.session_key_override
+        # Check per-chat session index for multi-session support.
+        base_key = f"{msg.channel}:{msg.chat_id}"
+        idx = self._session_indices.get(base_key, 0)
+        if idx > 0:
+            from nanobot.session.keys import session_key_for_channel
+            return session_key_for_channel(
+                msg.channel, msg.chat_id, session_index=idx,
+            )
         return msg.session_key
 
     def _remember_unified_session_route(

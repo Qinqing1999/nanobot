@@ -64,8 +64,23 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
     BuiltinCommandSpec(
         "/new",
         "New chat",
-        "Reset this chat and start a fresh conversation.",
+        "Start a new conversation in this chat. Previous conversations are preserved.",
         "square-pen",
+        lifecycle="finalize_active_turn",
+    ),
+    BuiltinCommandSpec(
+        "/sessions",
+        "List sessions",
+        "List all conversations in this chat. Use /switch to change.",
+        "list",
+    ),
+    BuiltinCommandSpec(
+        "/switch",
+        "Switch session",
+        "Switch to a different conversation in this chat.",
+        "arrow-left-right",
+        "<id>",
+        accepts_args=True,
         lifecycle="finalize_active_turn",
     ),
     BuiltinCommandSpec(
@@ -299,29 +314,136 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_new(ctx: CommandContext) -> OutboundMessage:
-    """Stop active task and start a fresh session."""
+    """Start a new session instead of clearing the current one."""
+    from nanobot.session.keys import (
+        parse_session_key,
+        session_base_key,
+        session_key_for_channel,
+    )
+
     loop = ctx.loop
     await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
-    session = ctx.session or loop.sessions.get_or_create(ctx.key)
-    snapshot = session.messages[session.last_consolidated:]
-    runtime = None
-    if snapshot:
-        runtime = ctx.runtime or loop.runtime_for_session(session)
-    session.clear()
-    loop.sessions.save(session)
-    loop.sessions.invalidate(session.key)
-    if snapshot and runtime is not None:
-        loop.schedule_background(
-            loop.consolidator.archive(  # pyright: ignore[reportUnknownMemberType]
-                snapshot,
-                runtime=runtime,
-                session_key=ctx.key,
-            )
-        )
+
+    # Parse current session key to get channel, chat_id, and index
+    channel, chat_id, current_index = parse_session_key(ctx.key)
+    base_key = session_base_key(ctx.key)
+
+    # Find the next available session index
+    next_index = current_index + 1
+    new_key = session_key_for_channel(channel, chat_id, session_index=next_index)
+    while loop.sessions.read_session_metadata(new_key) is not None:
+        next_index += 1
+        new_key = session_key_for_channel(channel, chat_id, session_index=next_index)
+
+    # Update the loop's session index tracker so future messages route here
+    loop._session_indices[base_key] = next_index  # pyright: ignore[reportPrivateUsage]
+
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-        content="New session started.",
-        metadata=dict(ctx.msg.metadata or {})
+        content=(
+            f"New conversation started (session {next_index}).\n"
+            f"Use /sessions to list all conversations, /switch <id> to switch."
+        ),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_sessions(ctx: CommandContext) -> OutboundMessage:
+    """List all sessions for the current channel:chat_id."""
+    from nanobot.session.keys import parse_session_key, session_base_key
+
+    loop = ctx.loop
+    base_key = session_base_key(ctx.key)
+
+    all_sessions = loop.sessions.list_sessions()
+    chat_sessions = [
+        s for s in all_sessions
+        if session_base_key(s.get("key", "")) == base_key
+    ]
+
+    if not chat_sessions or (len(chat_sessions) == 1 and chat_sessions[0].get("key") == ctx.key):
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content="This chat has only one conversation. Use /new to start another.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    lines = [f"📋 This chat has {len(chat_sessions)} conversation(s):\n"]
+    for s in sorted(chat_sessions, key=lambda x: x.get("key", "")):
+        _, _, index = parse_session_key(s.get("key", ""))
+        title = s.get("title") or "Untitled"
+        if not isinstance(title, str):
+            title = "Untitled"
+        preview = s.get("preview", "")
+        if not isinstance(preview, str):
+            preview = ""
+        preview = preview[:50]
+        marker = " ← current" if s.get("key") == ctx.key else ""
+        lines.append(f"  [{index}] {title}")
+        if preview:
+            lines.append(f"      {preview}…{marker}")
+        elif marker:
+            lines.append(f"      {marker.strip()}")
+
+    lines.append("\nUse /switch <id> to switch conversations")
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content="\n".join(lines),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_switch(ctx: CommandContext) -> OutboundMessage:
+    """Switch to a different session by index."""
+    from nanobot.session.keys import (
+        parse_session_key,
+        session_base_key,
+        session_key_for_channel,
+    )
+
+    args = ctx.args.strip()
+    if not args:
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content="Usage: /switch <id>\nUse /sessions to see available conversations.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    try:
+        target_index = int(args)
+    except ValueError:
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content=f"Invalid session id: {args}",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    channel, chat_id, _ = parse_session_key(ctx.key)
+    base_key = session_base_key(ctx.key)
+    target_key = session_key_for_channel(
+        channel, chat_id,
+        session_index=target_index if target_index > 0 else None,
+    )
+
+    # Check if target session exists
+    target_meta = ctx.loop.sessions.read_session_metadata(target_key)
+    if target_meta is None and target_index > 0:
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+            content=f"Conversation [{target_index}] does not exist. Use /sessions to see available ones.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    # Update the loop's session index tracker
+    ctx.loop._session_indices[base_key] = target_index  # pyright: ignore[reportPrivateUsage]
+
+    # Cancel any active tasks on the current session
+    await ctx.loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=f"Switched to conversation [{target_index}].",
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
 
@@ -1024,6 +1146,9 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/restart", cmd_restart)
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
+    router.exact("/sessions", cmd_sessions)
+    router.exact("/switch", cmd_switch)
+    router.prefix("/switch ", cmd_switch)
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
