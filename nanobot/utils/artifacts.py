@@ -120,3 +120,69 @@ def generated_image_tool_result(artifacts: list[dict[str, Any]]) -> str:
         },
         ensure_ascii=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Video artifacts
+# ---------------------------------------------------------------------------
+
+_VIDEO_MIME_EXTENSIONS: dict[str, str] = {
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "video/quicktime": ".mov",
+}
+
+
+def store_generated_video_artifact(
+    video_bytes: bytes,
+    *,
+    prompt: str,
+    model: str,
+    save_dir: str = "generated",
+    provider: str = "agnes",
+    created_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist a generated video and sidecar metadata under the media root.
+
+    Unlike :func:`store_generated_image_artifact`, this accepts raw bytes
+    (downloaded from a provider-hosted URL) rather than a data URL, because
+    video files are too large for base64 data URLs.
+    """
+    mime = "video/mp4"  # Agnes Video V2.0 returns MP4
+    ext = _VIDEO_MIME_EXTENSIONS.get(mime, ".mp4")
+
+    now = created_at or datetime.now().astimezone()
+    day_dir = ensure_dir(_artifact_root(save_dir) / now.strftime("%Y-%m-%d"))
+    artifact_id = f"vid_{uuid.uuid4().hex[:12]}"
+    video_path = day_dir / f"{artifact_id}{ext}"
+    metadata_path = day_dir / f"{artifact_id}.json"
+
+    video_path.write_bytes(video_bytes)
+    metadata: dict[str, Any] = {
+        "id": artifact_id,
+        "path": str(video_path),
+        "mime": mime,
+        "prompt": prompt,
+        "model": model,
+        "provider": provider,
+        "created_at": now.isoformat(),
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return metadata
+
+
+def generated_video_tool_result(artifact: dict[str, Any]) -> str:
+    """Return the compact structured result exposed to the LLM."""
+    return json.dumps(
+        {
+            "artifact": artifact,
+            "next_step": (
+                "视频已生成。使用 message 工具发送 artifact 的 path 给用户。"
+                "生成的视频已注册到制品注册表，可通过制品 ID 在后续对话中引用。"
+            ),
+        },
+        ensure_ascii=False,
+    )

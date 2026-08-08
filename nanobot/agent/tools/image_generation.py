@@ -100,6 +100,7 @@ class ImageGenerationTool(Tool):
             workspace=ctx.workspace,
             config=ctx.config.image_generation,
             provider_configs=ctx.image_generation_provider_configs,
+            sessions=ctx.sessions,
         )
 
     def __init__(
@@ -109,10 +110,12 @@ class ImageGenerationTool(Tool):
         config: ImageGenerationToolConfig,
         provider_config: ProviderConfig | None = None,
         provider_configs: dict[str, ProviderConfig] | None = None,
+        sessions: Any = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser()
         self.config = config
         self.provider_configs = dict(provider_configs or {})
+        self._sessions = sessions
         if provider_config is not None and "openrouter" not in self.provider_configs:
             self.provider_configs["openrouter"] = provider_config
 
@@ -176,6 +179,31 @@ class ImageGenerationTool(Tool):
             return []
         return [self._resolve_reference_image(value) for value in values if value]
 
+    def _register_artifact(self, artifact: dict[str, Any], *, prompt: str) -> None:
+        """Register a generated artifact in the session's artifact registry."""
+        if self._sessions is None:
+            return
+        from nanobot.agent.tools.context import current_request_context
+        ctx = current_request_context()
+        if ctx is None or not ctx.session_key:
+            return
+        try:
+            session = self._sessions.get_or_create(ctx.session_key)
+            entry = session.artifact_registry.register(
+                type="image",
+                path=artifact.get("path", ""),
+                filename=Path(artifact.get("path", "")).name,
+                mime=artifact.get("mime", "image/png"),
+                source="generated",
+                prompt=prompt,
+                model=self.config.model,
+            )
+            artifact["artifact_id"] = entry.id
+            session.sync_artifact_registry()
+            self._sessions.save(session)
+        except Exception:
+            logger.debug("Failed to register image artifact in session registry")
+
     async def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         prompt: str,
@@ -216,6 +244,8 @@ class ImageGenerationTool(Tool):
                         save_dir=self.config.save_dir,
                         provider=self.config.provider,
                     )
+                    # Register in session artifact registry
+                    self._register_artifact(artifact, prompt=prompt)
                     artifacts.append(artifact)
                     if len(artifacts) >= requested:
                         break

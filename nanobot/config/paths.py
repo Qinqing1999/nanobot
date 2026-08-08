@@ -28,7 +28,22 @@ def get_runtime_subdir(name: str) -> Path:
 
 
 def get_media_dir(channel: str | None = None) -> Path:
-    """Return the media directory, optionally namespaced per channel."""
+    """Return the media directory, optionally namespaced per channel.
+
+    When ``agents.defaults.media_dir`` is set in config, use that path
+    (supports NAS mount or other custom storage). Otherwise fall back
+    to the instance data directory.
+    """
+    from nanobot.config.loader import load_config
+
+    try:
+        config = load_config()
+        custom = config.agents.defaults.media_dir
+        if custom:
+            base = ensure_dir(Path(custom).expanduser())
+            return ensure_dir(base / channel) if channel else base
+    except Exception:
+        pass
     base = get_runtime_subdir("media")
     return ensure_dir(base / channel) if channel else base
 

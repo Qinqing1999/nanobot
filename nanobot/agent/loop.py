@@ -615,6 +615,7 @@ class AgentLoop:
             sessions=self.sessions,
             provider_snapshot_loader=provider_snapshot_loader,
             image_generation_provider_configs=self._image_generation_provider_configs,
+            schedule_background=self.schedule_background,
             timezone=self.context.timezone or "UTC",
             workspace_sandbox=self.workspace_scopes.sandbox_status,
             runtime_events=self.runtime_events,
@@ -752,10 +753,19 @@ class AgentLoop:
         ctx: TurnContext,
     ) -> list[RuntimeContextBlock]:
         assert ctx.request_context is not None
-        return await self._resolve_runtime_context_for_request(
+        blocks = await self._resolve_runtime_context_for_request(
             ctx.request_context,
             ctx.tools or self.tools,
         )
+        # Inject artifact registry context if the session has registered artifacts.
+        if ctx.session is not None:
+            reg_lines = ctx.session.artifact_registry.to_context_lines()
+            if reg_lines:
+                blocks.append(RuntimeContextBlock(
+                    source="artifacts",
+                    content="\n".join(reg_lines),
+                ))
+        return blocks
 
     async def _resolve_runtime_context_for_request(
         self,
@@ -1605,6 +1615,34 @@ class AgentLoop:
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
         session = ctx.session
+
+        # Register uploaded media files in the session's artifact registry.
+        if ctx.kind is TurnKind.USER and msg.media:
+            from nanobot.utils.helpers import detect_file_mime, mime_to_artifact_type
+            registry = session.artifact_registry
+            artifact_ids: list[str] = []
+            for path in msg.media:
+                if not isinstance(path, str) or not path:
+                    continue
+                try:
+                    mime = detect_file_mime(path)
+                    artifact_type = mime_to_artifact_type(mime)
+                    entry = registry.register(
+                        type=artifact_type,
+                        path=path,
+                        filename=path.rsplit("/", 1)[-1] if "/" in path else path,
+                        mime=mime,
+                        source="upload",
+                    )
+                    artifact_ids.append(entry.id)
+                except (OSError, ValueError):
+                    logger.debug("Could not register artifact for {}", path)
+            if artifact_ids:
+                session.sync_artifact_registry()
+                self.sessions.save(session)
+                # Attach artifact IDs to the inbound message for downstream use
+                ctx.msg = dataclasses.replace(msg, artifact_ids=artifact_ids)
+                msg = ctx.msg
         self._remember_unified_session_route(
             session,
             msg,

@@ -325,6 +325,44 @@ def detect_image_mime(data: bytes) -> str | None:
     return None
 
 
+def detect_file_mime(path: str | Path) -> str:
+    """Detect a file's MIME type from extension, falling back to magic bytes.
+
+    For images, uses :func:`detect_image_mime` on the first bytes.
+    For other types, uses :mod:`mimetypes` guessing from the filename.
+    Returns ``"application/octet-stream"`` if detection fails.
+    """
+    import mimetypes
+
+    p = Path(path)
+    guessed = mimetypes.guess_type(p.name)[0]
+    if guessed:
+        return guessed
+    # Try magic bytes for images
+    try:
+        raw = p.read_bytes()[:16]
+        img_mime = detect_image_mime(raw)
+        if img_mime:
+            return img_mime
+    except OSError:
+        pass
+    return "application/octet-stream"
+
+
+def mime_to_artifact_type(mime: str) -> str:
+    """Map a MIME type to an artifact type for the registry.
+
+    Returns one of: "image", "video", "audio", "document".
+    """
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("video/"):
+        return "video"
+    if mime.startswith("audio/"):
+        return "audio"
+    return "document"
+
+
 def build_image_content_blocks(
     raw: bytes, mime: str, path: str, label: str
 ) -> list[dict[str, Any]]:

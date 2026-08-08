@@ -339,6 +339,28 @@ class Session:
         self.provider_state = None
         self.updated_at = datetime.now()
         self.metadata.pop("_last_summary", None)
+        self._artifact_registry = None
+        self.metadata.pop("artifact_registry", None)
+
+    @property
+    def artifact_registry(self) -> Any:
+        """Lazily loaded per-session artifact registry."""
+        reg: Any = getattr(self, "_artifact_registry", None)
+        if reg is None:
+            from nanobot.utils.artifact_registry import ArtifactRegistry
+            data = self.metadata.get("artifact_registry")
+            if isinstance(data, dict):
+                reg = ArtifactRegistry.from_dict(cast(dict[str, Any], data))
+            else:
+                reg = ArtifactRegistry()
+            self._artifact_registry = reg
+        return reg
+
+    def sync_artifact_registry(self) -> None:
+        """Persist the artifact registry to session metadata."""
+        reg = getattr(self, "_artifact_registry", None)
+        if reg is not None:
+            self.metadata["artifact_registry"] = reg.to_dict()
 
     def retain_recent_legal_suffix(
         self,
