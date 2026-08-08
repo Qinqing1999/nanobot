@@ -166,7 +166,7 @@ async def test_runner_routes_hosted_tool_events_to_structured_progress():
             "embeds": [],
         },
     ]
-    assert progress_text == ['search X "nanobot oauth"', "", "done"]
+    assert progress_text == ['搜索 X', "", "done"]
     provider.chat_with_retry.assert_not_awaited()
 
 

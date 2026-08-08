@@ -336,7 +336,7 @@ def test_system_prompt_keeps_message_tool_out_of_current_chat_replies(tmp_path) 
 
     assert "Do not use the 'message' tool for normal replies in the current chat" in prompt
     assert "When 'generate_image' creates images" in prompt
-    assert "call 'message' with the artifact paths in the 'media' parameter" in prompt
+    assert "call 'message' with the artifact paths in the `media` parameter" in prompt
     assert "Wait for the tool results, then answer once" in prompt
 
 

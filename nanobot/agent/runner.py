@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -74,6 +75,57 @@ _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
+
+# Tools that should be blocked when the user sends only media without text
+# instructions, to prevent the LLM from auto-triggering generation.
+_GENERATION_TOOLS = {"generate_image", "generate_video"}
+
+# Patterns that indicate media-only references in user messages (no meaningful text).
+_MEDIA_ONLY_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\[image\]", re.IGNORECASE),
+    re.compile(r"\[Image:\s*source:\s*[^\]]+\]", re.IGNORECASE),
+    re.compile(r"\[voice\]", re.IGNORECASE),
+    re.compile(r"\[video\]", re.IGNORECASE),
+    re.compile(r"\[Audio:\s*source:\s*[^\]]+\]", re.IGNORECASE),
+    re.compile(r"\[Video:\s*source:\s*[^\]]+\]", re.IGNORECASE),
+    re.compile(r"\[file\]", re.IGNORECASE),
+    re.compile(r"\[File:\s*source:\s*[^\]]+\]", re.IGNORECASE),
+]
+
+
+def _extract_last_user_text(messages: list[dict[str, Any]]) -> str:
+    """Extract text content from the last user message in the conversation."""
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(cast(str, block.get("text", "")))
+            return "\n".join(parts)
+        return ""
+    return ""
+
+
+def _is_media_only_message(text: str) -> bool:
+    """Check if the user message contains only media references without meaningful text.
+
+    Returns True if the text is empty or only contains media references like
+    ``[image]``, ``[Image: source: ...]``, ``[voice]``, etc.
+    """
+    if not text or not text.strip():
+        return True
+    cleaned = text
+    for pattern in _MEDIA_ONLY_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    cleaned = cleaned.strip()
+    return not cleaned
 
 
 def _restore_outer_whitespace(content: str, original: str | None) -> str:
@@ -1433,6 +1485,33 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return lookup_error + hint, event, RuntimeError(lookup_error)
             return lookup_error + hint, event, None
+
+        # Guard: block media generation tools when the user's message contains
+        # only media references (e.g. "[image]") without meaningful text
+        # instructions.  This prevents the LLM from auto-triggering image/video
+        # generation just because the user uploaded an image.
+        if tool_call.name in _GENERATION_TOOLS:
+            user_text = _extract_last_user_text(context.messages)
+            if _is_media_only_message(user_text):
+                block_msg = (
+                    "Blocked: The user sent only an image without explicit text "
+                    "instructions. Do NOT generate images or videos automatically. "
+                    "Instead, analyze and describe the uploaded image, then ask the "
+                    "user what they want to do with it (e.g. describe, edit, answer "
+                    "a question, etc.)."
+                )
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "blocked: media-only message",
+                }
+                logger.info(
+                    "Blocked {} for media-only message in session {}",
+                    tool_call.name,
+                    spec.session_key or "default",
+                )
+                return block_msg, event, None
+
         prepare_call = cast(
             Callable[[str, Any], object] | None,
             getattr(spec.tools, "prepare_call", None),

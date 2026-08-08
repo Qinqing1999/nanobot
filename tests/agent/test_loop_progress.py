@@ -91,7 +91,7 @@ class TestToolEventProgress:
         assert progress == [
             ("Visible", False, None),
             (
-                'custom_tool("foo.txt")',
+                'custom_tool',
                 True,
                 [{
                     "version": 1,
@@ -1037,7 +1037,7 @@ class TestToolEventProgress:
 
         assert final_content == "Done"
         assert streamed == ["I will", " inspect it."]
-        assert progress[0][0] == 'custom_tool("foo.txt")'
+        assert progress[0][0] == 'custom_tool'
         assert all(item[0] != "I will inspect it." for item in progress)
 
     @pytest.mark.asyncio

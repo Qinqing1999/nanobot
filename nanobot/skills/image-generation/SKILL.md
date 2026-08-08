@@ -19,9 +19,16 @@ If the `generate_image` tool is not available in the current tool list, tell the
 
 ## When NOT To Use
 
-- Do not generate images just because the user uploaded one. Uploading an image is not a request to generate similar images.
-- If the user sends only an image without text instructions, ask what they want to do with it (describe, edit, answer a question, etc.) before calling any generation tool.
+**CRITICAL**: Do not generate images just because the user uploaded one.
+
+- Uploading an image is **NOT** a request to generate similar images.
+- If the user sends only an image without text instructions, you **MUST** first analyze
+  and describe the image, then ask what they want to do with it (describe, edit, answer
+  a question, etc.) before calling any generation tool.
 - Do not proactively generate multiple variations unless the user explicitly asks for options.
+- Do not generate keyframe images or related media unless the user explicitly requests a
+  video or animation that requires them.
+- These rules override any implicit interpretation of user intent. When in doubt, ask.
 
 ## Prompt Rules
 

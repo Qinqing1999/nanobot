@@ -164,6 +164,9 @@ class VideoGenerationTool(Tool):
             "通过文本提示词或图片生成视频。支持文生视频、图生视频和关键帧动画。"
             "创建任务后在后台轮询，完成时自动推送视频文件给用户。"
             "使用 image 参数的 artifact ID 引用之前上传/生成的图片。"
+            "重要：不要仅因用户上传了图片就自动调用此工具。"
+            "只有当用户明确要求生成或制作视频时才调用。"
+            "如果用户只发了图片没有文字指令，先询问用户想做什么。"
         )
 
     def _provider_client(self) -> VideoGenerationProvider | None:

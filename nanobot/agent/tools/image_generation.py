@@ -133,7 +133,10 @@ class ImageGenerationTool(Tool):
         return (
             "Generate or edit images and store them as persistent artifacts. "
             "Returns artifact ids and local paths. For edits, pass prior generated image paths "
-            "or user image paths as reference_images."
+            "or user image paths as reference_images. "
+            "IMPORTANT: Do NOT call this tool just because the user uploaded an image. "
+            "Only call when the user explicitly asks to generate, create, draw, or edit an image. "
+            "If the user sends only an image without instructions, ask what they want to do with it."
         )
 
     def _provider_config(self) -> ProviderConfig | None:
