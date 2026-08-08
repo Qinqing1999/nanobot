@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 UNIFIED_SESSION_KEY = "unified:default"
 LAST_CHANNEL_METADATA_KEY = "last_channel"
 
-# Matches channel:chat_id with optional :index suffix.
-_SESSION_SUFFIX_RE = re.compile(r"^(\w+:\w+)(?::(\d+))?$")
+# Session keys are formatted as ``channel:chat_id`` with an optional ``:N``
+# suffix for multi-session support (e.g. ``weixin:12345@chatroom:2``).
+# The previous regex ``^(\w+:\w+)(?::(\d+))?$`` only matched word
+# characters in chat_id, breaking for IDs containing ``@``, ``-``, etc.
+# We now use a split-based approach in parse_session_key / session_base_key
+# so that any character is allowed in chat_id.
 
 
 def session_key_for_channel(
@@ -62,22 +65,35 @@ def parse_session_key(key: str) -> tuple[str, str, int]:
     """Parse a session key into ``(channel, chat_id, index)``.
 
     ``index=0`` means the default (no suffix) session.
-    For keys that don't match the standard pattern, returns the key as
-    ``channel`` with an empty ``chat_id`` and ``index=0``.
+
+    The key format is ``channel:chat_id`` with an optional ``:N`` suffix
+    for multi-session support.  ``chat_id`` may contain any characters,
+    including colons.  The index is only extracted when the key has at
+    least three ``:``-separated parts and the last part is purely digits.
     """
-    m = _SESSION_SUFFIX_RE.match(key)
-    if not m:
-        if ":" in key:
-            channel, _, chat_id = key.partition(":")
-            return channel, chat_id, 0
+    parts = key.split(":")
+    if len(parts) < 2:
         return key, "", 0
-    channel_chat = m.group(1)
-    index = int(m.group(2)) if m.group(2) else 0
-    channel, _, chat_id = channel_chat.partition(":")
+    channel = parts[0]
+    # If there are ≥3 parts and the last part is a pure number, treat it
+    # as the session index.  This avoids misinterpreting ``weixin:123``
+    # (where ``123`` is the chat_id) as having an index.
+    if len(parts) >= 3 and parts[-1].isdigit():
+        index = int(parts[-1])
+        chat_id = ":".join(parts[1:-1])
+    else:
+        index = 0
+        chat_id = ":".join(parts[1:])
     return channel, chat_id, index
 
 
 def session_base_key(key: str) -> str:
-    """Return the base key without the session index suffix."""
-    m = _SESSION_SUFFIX_RE.match(key)
-    return m.group(1) if m else key
+    """Return the base key without the session index suffix.
+
+    For ``weixin:12345@chatroom:2`` → ``weixin:12345@chatroom``.
+    For ``weixin:12345@chatroom`` → ``weixin:12345@chatroom`` (unchanged).
+    """
+    parts = key.split(":")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        return ":".join(parts[:-1])
+    return key

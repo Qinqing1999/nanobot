@@ -22,6 +22,7 @@ from nanobot.bus.events import (
     RUNTIME_CONTROL_ACK,
     RUNTIME_CONTROL_IMAGE_GENERATION_RELOAD,
     InboundMessage,
+    OutboundMessage,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.config.paths import get_media_dir
@@ -43,6 +44,7 @@ from nanobot.utils.helpers import detect_image_mime
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.context import ToolContext
+    from nanobot.bus.queue import MessageBus
     from nanobot.config.schema import ProviderConfig
 
 
@@ -101,6 +103,7 @@ class ImageGenerationTool(Tool):
             config=ctx.config.image_generation,
             provider_configs=ctx.image_generation_provider_configs,
             sessions=ctx.sessions,
+            bus=ctx.bus,
         )
 
     def __init__(
@@ -111,11 +114,13 @@ class ImageGenerationTool(Tool):
         provider_config: ProviderConfig | None = None,
         provider_configs: dict[str, ProviderConfig] | None = None,
         sessions: Any = None,
+        bus: MessageBus | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser()
         self.config = config
         self.provider_configs = dict(provider_configs or {})
         self._sessions = sessions
+        self._bus = bus
         if provider_config is not None and "openrouter" not in self.provider_configs:
             self.provider_configs["openrouter"] = provider_config
 
@@ -249,6 +254,29 @@ class ImageGenerationTool(Tool):
                     artifacts.append(artifact)
                     if len(artifacts) >= requested:
                         break
+            # Push artifact notification to user (before returning result to LLM)
+            if self._bus and artifacts:
+                from nanobot.agent.tools.context import current_request_context
+                from nanobot.utils.artifact_registry import format_artifact_notification
+
+                req_ctx = current_request_context()
+                if req_ctx is not None:
+                    notification_artifacts = [
+                        {
+                            "id": a.get("artifact_id", ""),
+                            "type": "image",
+                            "filename": Path(a.get("path", "")).name,
+                        }
+                        for a in artifacts
+                        if a.get("artifact_id")
+                    ]
+                    if notification_artifacts:
+                        notification = format_artifact_notification(notification_artifacts)
+                        await self._bus.publish_outbound(OutboundMessage(
+                            channel=req_ctx.channel,
+                            chat_id=req_ctx.chat_id,
+                            content=notification,
+                        ))
             return generated_image_tool_result(artifacts)
         except (ArtifactError, ImageGenerationError, OSError) as exc:
             return ToolResult.error(f"Error: {exc}")
@@ -276,6 +304,8 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
             workspace=state.workspace,
             config=tool_config,
             provider_configs=provider_configs,
+            sessions=getattr(state, "sessions", None),
+            bus=getattr(state, "bus", None),
         )
         if tool_config.enabled
         else None

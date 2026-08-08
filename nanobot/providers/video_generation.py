@@ -98,6 +98,23 @@ class VideoGenerationError(Exception):
     pass
 
 
+# Status values the API may return that mean "completed".
+_COMPLETED_STATUSES = frozenset({
+    "completed", "complete", "succeed", "success", "done", "finished",
+})
+
+
+def _normalize_status(raw: str) -> str:
+    """Normalise various API status strings to canonical values.
+
+    Maps synonyms like ``succeed``, ``success``, ``done`` → ``completed``.
+    """
+    s = raw.lower().strip()
+    if s in _COMPLETED_STATUSES:
+        return "completed"
+    return s
+
+
 # ---------------------------------------------------------------------------
 # Base provider
 # ---------------------------------------------------------------------------
@@ -121,7 +138,12 @@ class VideoGenerationProvider:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.api_key = api_key or ""
-        self.api_base = api_base or self._default_base_url()
+        raw_base = api_base or self._default_base_url()
+        # Strip trailing /v1 (or /v2, etc.) since we always append /v1/videos
+        raw_base = raw_base.rstrip("/")
+        if re.search(r"/v\d+$", raw_base):
+            raw_base = re.sub(r"/v\d+$", "", raw_base)
+        self.api_base = raw_base
         self.extra_headers = dict(extra_headers or {})
         self.extra_body = dict(extra_body or {})
         self.proxy = proxy
@@ -279,7 +301,7 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
                 return VideoTaskResponse(
                     video_id=data.get("video_id", ""),
                     task_id=data.get("task_id", data.get("id", "")),
-                    status=data.get("status", "queued"),
+                    status=_normalize_status(data.get("status", "queued")),
                     progress=data.get("progress", 0),
                     seconds=str(data.get("seconds", "")) if data.get("seconds") else None,
                     size=data.get("size"),
@@ -305,45 +327,90 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
         }
         url = f"{self.api_base}/agnesapi?video_id={video_id}"
 
-        client = self._client or httpx.AsyncClient(**self._http_client_kwargs())
-        try:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+        for attempt in range(_VIDEO_429_RETRY_MAX):
+            client = self._client or httpx.AsyncClient(**self._http_client_kwargs())
+            try:
+                response = await client.get(url, headers=headers)
+                if response.status_code == 429:
+                    if self._is_retryable_429(response):
+                        if attempt < _VIDEO_429_RETRY_MAX - 1:
+                            delay = self._extract_retry_after(response)
+                            logger.warning(
+                                "Agnes video status got 429 (attempt {}/{}), "
+                                "retrying in {:.1f}s",
+                                attempt + 1, _VIDEO_429_RETRY_MAX, delay,
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                    raise VideoGenerationError(
+                        f"Agnes video status API quota exceeded: {response.text[:500]}"
+                    )
+                response.raise_for_status()
+                data: dict[str, Any] = response.json()
 
-            video_url: str | None = None
-            metadata = data.get("metadata")
-            if isinstance(metadata, dict):
-                meta = cast(dict[str, Any], metadata)
-                url_val: object = meta.get("url")
-                if isinstance(url_val, str):
-                    video_url = url_val
+                logger.debug(
+                    "Agnes video status response for {}: status={} progress={} has_url={}",
+                    video_id,
+                    data.get("status"),
+                    data.get("progress", 0),
+                    bool(
+                        isinstance(data.get("metadata"), dict)
+                        and data.get("metadata", {}).get("url")
+                    ),
+                )
 
-            error_msg: str | None = None
-            error = data.get("error")
-            if isinstance(error, dict):
-                err = cast(dict[str, Any], error)
-                msg_val: object = err.get("message")
-                if isinstance(msg_val, str):
-                    error_msg = msg_val
-            elif isinstance(error, str):
-                error_msg = error
+                video_url: str | None = None
+                # Try multiple possible locations for the video URL
+                metadata = data.get("metadata")
+                if isinstance(metadata, dict):
+                    meta = cast(dict[str, Any], metadata)
+                    url_val: object = meta.get("url")
+                    if isinstance(url_val, str):
+                        video_url = url_val
+                if not video_url:
+                    # Fallback: check top-level fields
+                    for key in ("url", "video_url", "download_url", "result_url"):
+                        val = data.get(key)
+                        if isinstance(val, str) and val.startswith("http"):
+                            video_url = val
+                            break
+                if not video_url:
+                    # Fallback: check nested result object
+                    result_obj = data.get("result")
+                    if isinstance(result_obj, dict):
+                        for key in ("url", "video_url", "download_url"):
+                            val = cast(dict[str, Any], result_obj).get(key)
+                            if isinstance(val, str) and val.startswith("http"):
+                                video_url = val
+                                break
 
-            return VideoTaskResponse(
-                video_id=data.get("video_id", video_id),
-                task_id=data.get("task_id", data.get("id", "")),
-                status=data.get("status", "unknown"),
-                progress=data.get("progress", 0),
-                seconds=str(data.get("seconds", "")) if data.get("seconds") else None,
-                size=data.get("size"),
-                created_at=data.get("created_at"),
-                video_url=video_url,
-                error=error_msg,
-            )
-        except httpx.TimeoutException:
-            raise VideoGenerationError("Agnes video status query timed out")
-        except httpx.RequestError as exc:
-            raise VideoGenerationError(f"Status query failed: {exc}")
-        finally:
-            if self._client is None:
-                await client.aclose()
+                error_msg: str | None = None
+                error = data.get("error")
+                if isinstance(error, dict):
+                    err = cast(dict[str, Any], error)
+                    msg_val: object = err.get("message")
+                    if isinstance(msg_val, str):
+                        error_msg = msg_val
+                elif isinstance(error, str):
+                    error_msg = error
+
+                return VideoTaskResponse(
+                    video_id=data.get("video_id", video_id),
+                    task_id=data.get("task_id", data.get("id", "")),
+                    status=_normalize_status(data.get("status", "unknown")),
+                    progress=data.get("progress", 0),
+                    seconds=str(data.get("seconds", "")) if data.get("seconds") else None,
+                    size=data.get("size"),
+                    created_at=data.get("created_at"),
+                    video_url=video_url,
+                    error=error_msg,
+                )
+            except httpx.TimeoutException:
+                raise VideoGenerationError("Agnes video status query timed out")
+            except httpx.RequestError as exc:
+                raise VideoGenerationError(f"Status query failed: {exc}")
+            finally:
+                if self._client is None:
+                    await client.aclose()
+
+        raise VideoGenerationError("Agnes video status query failed after retries")

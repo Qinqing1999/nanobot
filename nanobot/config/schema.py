@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.image_generation import ImageGenerationToolConfig
     from nanobot.agent.tools.self import MyToolConfig
     from nanobot.agent.tools.shell import ExecToolConfig
+    from nanobot.agent.tools.video_generation import VideoGenerationToolConfig
     from nanobot.agent.tools.web import WebToolsConfig
 
 
@@ -148,6 +149,7 @@ class AgentDefaults(Base):
     unified_session: bool = False  # Share one session across all channels (single-user multi-device)
     disabled_skills: list[str] = Field(default_factory=list)  # Skill names to exclude from loading (e.g. ["summarize", "skill-creator"])
     media_dir: str | None = None  # Custom media storage directory (e.g. NAS mount path). Default: ~/.nanobot/media/
+    uploads_dir: str | None = None  # Custom subdirectory under media_dir for user uploads (relative path). Default: <media_dir>/
     session_ttl_minutes: int = Field(
         default=15,
         ge=0,
@@ -408,7 +410,7 @@ class ToolsConfig(Base):
     image_generation: ImageGenerationToolConfig = Field(
         default_factory=lambda: _lazy_default("nanobot.agent.tools.image_generation", "ImageGenerationToolConfig"),
     )
-    video_generation: Any = Field(
+    video_generation: VideoGenerationToolConfig = Field(
         default_factory=lambda: _lazy_default("nanobot.agent.tools.video_generation", "VideoGenerationToolConfig"),
     )
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible

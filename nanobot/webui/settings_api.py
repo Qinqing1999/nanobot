@@ -1360,6 +1360,8 @@ def settings_payload(
         "runtime": {
             "config_path": str(get_config_path().expanduser()),
             "workspace_path": str(config.workspace_path),
+            "media_dir": defaults.media_dir or "",
+            "uploads_dir": defaults.uploads_dir or "",
             "gateway_host": config.gateway.host,
             "gateway_port": config.gateway.port,
             "heartbeat": {
@@ -1486,6 +1488,37 @@ def update_agent_settings(query: QueryParams) -> dict[str, Any]:
     if changed:
         save_config(config)
     return settings_payload(requires_restart=restart_required)
+
+
+def update_storage_settings(query: QueryParams) -> dict[str, Any]:
+    """Update media and uploads directory paths."""
+    config = load_config()
+    defaults = config.agents.defaults
+    changed = False
+
+    media_dir = _query_first(query, "media_dir")
+    if media_dir is not None:
+        media_dir = media_dir.strip()
+        if media_dir and len(media_dir) > 1024:
+            raise WebUISettingsError("media_dir is too long")
+        new_media_dir = media_dir or None
+        if defaults.media_dir != new_media_dir:
+            defaults.media_dir = new_media_dir
+            changed = True
+
+    uploads_dir = _query_first(query, "uploads_dir")
+    if uploads_dir is not None:
+        uploads_dir = uploads_dir.strip()
+        if uploads_dir and len(uploads_dir) > 1024:
+            raise WebUISettingsError("uploads_dir is too long")
+        new_uploads_dir = uploads_dir or None
+        if defaults.uploads_dir != new_uploads_dir:
+            defaults.uploads_dir = new_uploads_dir
+            changed = True
+
+    if changed:
+        save_config(config)
+    return settings_payload(requires_restart=changed)
 
 
 def create_model_configuration(query: QueryParams) -> dict[str, Any]:
@@ -2337,6 +2370,17 @@ def update_image_generation_settings(query: QueryParams) -> dict[str, Any]:
         if not selected_provider or not selected_provider["configured"]:
             raise WebUISettingsError("image generation provider is not configured")
 
+    save_dir = _query_first(query, "save_dir")
+    if save_dir is not None:
+        save_dir = save_dir.strip()
+        if not save_dir:
+            raise WebUISettingsError("save_dir is required")
+        if len(save_dir) > 512:
+            raise WebUISettingsError("save_dir is too long")
+        if image_config.save_dir != save_dir:
+            image_config.save_dir = save_dir
+            changed = True
+
     if changed:
         save_config(config)
     return settings_payload(requires_restart=changed)
@@ -2378,9 +2422,69 @@ def update_video_generation_settings(query: QueryParams) -> dict[str, Any]:
             video_config.provider = provider_name
             changed = True
 
+    default_width = _query_first(query, "default_width")
+    if default_width is not None:
+        try:
+            parsed_width = int(default_width)
+        except ValueError:
+            raise WebUISettingsError("default_width must be an integer") from None
+        if parsed_width < 1 or parsed_width > 4096:
+            raise WebUISettingsError("default_width must be between 1 and 4096")
+        if video_config.default_width != parsed_width:
+            video_config.default_width = parsed_width
+            changed = True
+
+    default_height = _query_first(query, "default_height")
+    if default_height is not None:
+        try:
+            parsed_height = int(default_height)
+        except ValueError:
+            raise WebUISettingsError("default_height must be an integer") from None
+        if parsed_height < 1 or parsed_height > 4096:
+            raise WebUISettingsError("default_height must be between 1 and 4096")
+        if video_config.default_height != parsed_height:
+            video_config.default_height = parsed_height
+            changed = True
+
+    default_num_frames = _query_first(query, "default_num_frames")
+    if default_num_frames is not None:
+        try:
+            parsed_frames = int(default_num_frames)
+        except ValueError:
+            raise WebUISettingsError("default_num_frames must be an integer") from None
+        if parsed_frames < 1 or parsed_frames > 1000:
+            raise WebUISettingsError("default_num_frames must be between 1 and 1000")
+        if video_config.default_num_frames != parsed_frames:
+            video_config.default_num_frames = parsed_frames
+            changed = True
+
+    default_frame_rate = _query_first(query, "default_frame_rate")
+    if default_frame_rate is not None:
+        try:
+            parsed_fps = int(default_frame_rate)
+        except ValueError:
+            raise WebUISettingsError("default_frame_rate must be an integer") from None
+        if parsed_fps < 1 or parsed_fps > 60:
+            raise WebUISettingsError("default_frame_rate must be between 1 and 60")
+        if video_config.default_frame_rate != parsed_fps:
+            video_config.default_frame_rate = parsed_fps
+            changed = True
+
+    save_dir = _query_first(query, "save_dir")
+    if save_dir is not None:
+        save_dir = save_dir.strip()
+        if not save_dir:
+            raise WebUISettingsError("save_dir is required")
+        if len(save_dir) > 512:
+            raise WebUISettingsError("save_dir is too long")
+        if video_config.save_dir != save_dir:
+            video_config.save_dir = save_dir
+            changed = True
+
     if changed:
         save_config(config)
     return settings_payload(requires_restart=changed)
+
 
 async def image_generation_models_payload(query: QueryParams) -> dict[str, Any]:
     """Fetch an image generation provider's model list for Settings.

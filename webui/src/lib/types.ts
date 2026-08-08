@@ -650,9 +650,11 @@ export interface SettingsPayload {
       default_api_base?: string | null;
     }>;
   };
-  runtime: {
-    config_path: string;
-    workspace_path: string;
+runtime: {
+config_path: string;
+workspace_path: string;
+media_dir: string;
+uploads_dir: string;
     gateway_host: string;
     gateway_port: number;
     heartbeat: {
@@ -725,7 +727,7 @@ export interface SettingsPayload {
     exec_path_append_set: boolean;
   };
   requires_restart: boolean;
-  restart_required_sections?: Array<"runtime" | "browser" | "image">;
+  restart_required_sections?: Array<"runtime" | "browser" | "image" | "video">;
   version?: {
     current: string;
   };
@@ -1126,18 +1128,24 @@ export interface NetworkSafetySettingsUpdate {
 }
 
 export interface ImageGenerationSettingsUpdate {
-  enabled: boolean;
-  provider: string;
-  model: string;
-  defaultAspectRatio: string;
-  defaultImageSize: string;
-  maxImagesPerTurn: number;
+enabled: boolean;
+provider: string;
+model: string;
+defaultAspectRatio: string;
+defaultImageSize: string;
+maxImagesPerTurn: number;
+saveDir: string;
 }
 
 export interface VideoGenerationSettingsUpdate {
-  enabled: boolean;
-  provider: string;
-  model: string;
+enabled: boolean;
+provider: string;
+model: string;
+defaultWidth: number;
+defaultHeight: number;
+defaultNumFrames: number;
+defaultFrameRate: number;
+saveDir: string;
 }
 
 export interface TranscriptionSettingsUpdate {

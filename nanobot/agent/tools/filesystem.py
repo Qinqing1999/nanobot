@@ -55,6 +55,8 @@ class _FsTool(Tool):
         restrict_to_workspace: bool | None = None,
         sandbox_restricts_workspace: bool = False,
         extra_read_allowed_files: list[Path] | None = None,
+        sessions: Any = None,
+        bus: Any = None,
     ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
@@ -78,6 +80,8 @@ class _FsTool(Tool):
         # current async task, which keeps shared tool instances session-safe.
         self._explicit_file_states = file_states
         self._fallback_file_states = FileStates()
+        self._sessions = sessions
+        self._bus = bus
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
@@ -101,6 +105,8 @@ class _FsTool(Tool):
             file_states=ctx.file_state_store,
             restrict_to_workspace=ctx.config.restrict_to_workspace,
             sandbox_restricts_workspace=sandbox_restricts,
+            sessions=ctx.sessions,
+            bus=ctx.bus,
         )
 
     @property
@@ -521,11 +527,70 @@ class WriteFileTool(_FsTool):
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(content, encoding="utf-8")
             self._file_states.record_write(fp)
+
+            # Register document artifacts (md, pdf, docx, etc.) in the session
+            # artifact registry and notify the user with the artifact ID.
+            await self._maybe_register_artifact(fp)
+
             return f"Successfully wrote {len(content)} characters to {fp}"
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error writing file: {e}")
+
+    async def _maybe_register_artifact(self, fp: Path) -> None:
+        """Register the written file as an artifact if its extension is registerable."""
+        from nanobot.utils.artifact_registry import (
+            artifact_type_for_extension,
+            format_artifact_notification,
+        )
+
+        art_type = artifact_type_for_extension(fp.suffix)
+        if art_type is None:
+            return
+        if self._sessions is None:
+            return
+
+        from nanobot.agent.tools.context import current_request_context
+
+        req_ctx = current_request_context()
+        if req_ctx is None or not req_ctx.session_key:
+            return
+
+        try:
+            import mimetypes
+
+            session = self._sessions.get_or_create(req_ctx.session_key)
+            existing = session.artifact_registry.find_by_path(str(fp))
+            if existing is not None:
+                return  # already registered
+            mime_str = mimetypes.guess_type(str(fp))[0] or "application/octet-stream"
+            entry = session.artifact_registry.register(
+                type=art_type,
+                path=str(fp),
+                filename=fp.name,
+                mime=mime_str,
+                source="generated",
+            )
+            session.sync_artifact_registry()
+            self._sessions.save(session)
+
+            # Push artifact notification to user
+            if self._bus is not None:
+                from nanobot.bus.events import OutboundMessage
+
+                notification = format_artifact_notification([{
+                    "id": entry.id,
+                    "type": art_type,
+                    "filename": fp.name,
+                }])
+                await self._bus.publish_outbound(OutboundMessage(
+                    channel=req_ctx.channel,
+                    chat_id=req_ctx.chat_id,
+                    content=notification,
+                ))
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

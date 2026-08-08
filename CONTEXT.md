@@ -32,9 +32,17 @@ _Avoid_: 定时器、cron 任务
 后台任务完成后，通过 `MessageBus.publish_outbound()` 向用户所在频道发送 `OutboundMessage`（含视频文件附件）的机制。不需要用户或 agent 主动查询。
 _Avoid_: 回调、webhook
 
+**制品通知 (Artifact Notification)**:
+当文件上传或生成后，通道层或工具层通过 `OutboundMessage` 向用户发送的一条系统消息，包含制品 ID、类型、文件名和时间戳。与 LLM 回复独立，用户在 LLM 处理完成前即可看到 ID。
+_Avoid_: 制品事件（Artifact Event，指 WebSocket 专用事件）、制品回执
+
 **进度提示 (Progress Hint)**:
 在工具执行期间或后台任务运行期间，向用户频道推送的状态提示消息。视频生成采用"开始 → 50% → 完成"三阶段推送。
 _Avoid_: 日志、调试输出
+
+**制品引用解析 (Artifact Reference Resolution)**:
+消息预处理阶段，从用户文本中提取四位数字候选并查询制品注册表，命中时将对应文件路径加入 `InboundMessage.media` 并将文本中的 ID 替换为描述性引用。发生在 `_restore_turn` 中，LLM 不可见。
+_Avoid_: ID 查找、文件定位
 
 **会话切换 (Session Switching)**:
 用户通过 `/sessions` 和 `/switch` 命令在同一 channel 内查看、新建和切换不同会话的能力。通过 `session_key_override` 实现。

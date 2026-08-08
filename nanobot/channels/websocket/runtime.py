@@ -896,6 +896,52 @@ class WebSocketChannel(BaseChannel):
                     )
                     return
 
+                # Register uploaded files in the session artifact registry
+                # and push the artifact IDs back to the user via OutboundMessage.
+                upload_artifact_ids: list[dict[str, str]] = []
+                if media_paths and self.gateway.session_manager is not None:
+                    try:
+                        import mimetypes
+
+                        session_key = f"{self.name}:{cid}"
+                        session = self.gateway.session_manager.get_or_create(session_key)
+                        for p in media_paths:
+                            mime, _ = mimetypes.guess_type(p)
+                            mime_str = mime or "application/octet-stream"
+                            if mime_str.startswith("image/"):
+                                art_type = "image"
+                            elif mime_str.startswith("video/"):
+                                art_type = "video"
+                            elif mime_str.startswith("audio/"):
+                                art_type = "audio"
+                            else:
+                                art_type = "document"
+                            entry = session.artifact_registry.register(
+                                type=art_type,
+                                path=p,
+                                filename=Path(p).name,
+                                mime=mime_str,
+                                source="upload",
+                            )
+                            upload_artifact_ids.append({
+                                "id": entry.id,
+                                "path": p,
+                                "filename": entry.filename,
+                                "type": art_type,
+                            })
+                        session.sync_artifact_registry()
+                        self.gateway.session_manager.save(session)
+                    except Exception:
+                        pass
+                if upload_artifact_ids:
+                    from nanobot.utils.artifact_registry import format_artifact_notification
+                    notification = format_artifact_notification(upload_artifact_ids)
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=self.name,
+                        chat_id=cid,
+                        content=notification,
+                    ))
+
             # Allow media-only turns (content may be empty when attachments are present).
             if not content.strip() and not media_paths:
                 await self._send_event(

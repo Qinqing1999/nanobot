@@ -48,6 +48,33 @@ def get_media_dir(channel: str | None = None) -> Path:
     return ensure_dir(base / channel) if channel else base
 
 
+def get_uploads_dir(channel: str | None = None) -> Path:
+    """Return the uploads directory for user-uploaded files.
+
+    When ``agents.defaults.uploads_dir`` is set, resolve it under the media
+    directory (relative path) or use it directly (absolute path).
+    Otherwise fall back to the media directory root.
+    """
+    from nanobot.config.loader import load_config
+
+    media_root = get_media_dir()
+    try:
+        config = load_config()
+        uploads_subdir = config.agents.defaults.uploads_dir
+        if uploads_subdir:
+            uploads_subdir = uploads_subdir.strip()
+            if uploads_subdir:
+                candidate = Path(uploads_subdir).expanduser()
+                if not candidate.is_absolute():
+                    candidate = media_root / candidate
+                if channel:
+                    candidate = candidate / channel
+                return ensure_dir(candidate)
+    except Exception:
+        pass
+    return ensure_dir(media_root / channel) if channel else media_root
+
+
 def get_cron_dir() -> Path:
     """Return the cron storage directory."""
     return get_runtime_subdir("cron")

@@ -65,3 +65,74 @@ def test_unified_session_key() -> None:
     assert session_base_key(UNIFIED_SESSION_KEY) == UNIFIED_SESSION_KEY
     ch, cid, idx = parse_session_key(UNIFIED_SESSION_KEY)
     assert idx == 0
+
+
+# -- Non-word chat_id tests (e.g. WeChat group IDs) --------------------
+
+
+def test_parse_wechat_group_id() -> None:
+    """WeChat group chat IDs contain '@' which is not a word char."""
+    channel, chat_id, index = parse_session_key("weixin:12345@chatroom")
+    assert channel == "weixin"
+    assert chat_id == "12345@chatroom"
+    assert index == 0
+
+
+def test_parse_wechat_group_id_with_index() -> None:
+    """WeChat group ID with session index suffix."""
+    channel, chat_id, index = parse_session_key("weixin:12345@chatroom:1")
+    assert channel == "weixin"
+    assert chat_id == "12345@chatroom"
+    assert index == 1
+
+
+def test_session_base_key_wechat_group() -> None:
+    """Base key extraction for WeChat group IDs."""
+    assert session_base_key("weixin:12345@chatroom") == "weixin:12345@chatroom"
+    assert session_base_key("weixin:12345@chatroom:1") == "weixin:12345@chatroom"
+    assert session_base_key("weixin:12345@chatroom:10") == "weixin:12345@chatroom"
+
+
+def test_parse_chat_id_with_hyphen() -> None:
+    """Chat IDs with hyphens should parse correctly."""
+    channel, chat_id, index = parse_session_key("discord:user-abc-123")
+    assert channel == "discord"
+    assert chat_id == "user-abc-123"
+    assert index == 0
+
+
+def test_parse_chat_id_with_hyphen_and_index() -> None:
+    """Chat IDs with hyphens and index suffix."""
+    channel, chat_id, index = parse_session_key("discord:user-abc-123:2")
+    assert channel == "discord"
+    assert chat_id == "user-abc-123"
+    assert index == 2
+
+
+def test_session_base_key_hyphenated() -> None:
+    """Base key extraction for hyphenated chat IDs."""
+    assert session_base_key("discord:user-abc-123:2") == "discord:user-abc-123"
+
+
+def test_parse_numeric_chat_id_no_false_index() -> None:
+    """'weixin:123' should NOT be parsed as having index 123."""
+    channel, chat_id, index = parse_session_key("weixin:123")
+    assert channel == "weixin"
+    assert chat_id == "123"
+    assert index == 0
+
+
+def test_session_base_key_numeric_chat_id() -> None:
+    """'weixin:123' base key is itself (no index to strip)."""
+    assert session_base_key("weixin:123") == "weixin:123"
+
+
+def test_round_trip_weixin_group() -> None:
+    """session_key_for_channel → parse_session_key round-trip for WeChat groups."""
+    key = session_key_for_channel("weixin", "12345@chatroom", session_index=3)
+    assert key == "weixin:12345@chatroom:3"
+    channel, chat_id, index = parse_session_key(key)
+    assert channel == "weixin"
+    assert chat_id == "12345@chatroom"
+    assert index == 3
+    assert session_base_key(key) == "weixin:12345@chatroom"

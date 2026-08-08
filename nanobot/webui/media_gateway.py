@@ -10,7 +10,7 @@ from typing import Any
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
-from nanobot.config.paths import get_media_dir
+from nanobot.config.paths import get_media_dir, get_uploads_dir
 from nanobot.webui.attachment_ingress import (
     AttachmentIngressResult,
     store_inbound_attachments,
@@ -30,6 +30,10 @@ def _default_media_dir(channel: str | None) -> Path:
     return get_media_dir(channel)
 
 
+def _default_uploads_dir(channel: str | None) -> Path:
+    return get_uploads_dir(channel)
+
+
 class WebUIMediaGateway:
     """Own media URL signing and WebUI markdown/media augmentation."""
 
@@ -39,12 +43,14 @@ class WebUIMediaGateway:
         workspace_path: Path,
         logger: Any,
         media_dir: Callable[[str | None], Path] | None = None,
+        uploads_dir: Callable[[str | None], Path] | None = None,
         secret: bytes | None = None,
         attachment_limits: AttachmentIngressLimits | None = None,
     ) -> None:
         self.workspace_path = workspace_path
         self.logger = logger
         self._media_dir: Callable[[str | None], Path] = media_dir or _default_media_dir
+        self._uploads_dir: Callable[[str | None], Path] = uploads_dir or _default_uploads_dir
         self.secret = secret or secrets.token_bytes(32)
         self.attachment_limits = attachment_limits or AttachmentIngressLimits()
 
@@ -52,7 +58,7 @@ class WebUIMediaGateway:
         """Validate and persist attachments from an inbound WebUI message."""
         return store_inbound_attachments(
             media,
-            media_dir=self._media_dir("websocket"),
+            media_dir=self._uploads_dir("websocket"),
             logger=self.logger,
             limits=self.attachment_limits,
         )

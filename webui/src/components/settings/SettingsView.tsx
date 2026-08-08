@@ -142,8 +142,9 @@ import {
   stopApiService,
   updateAutomation,
   updateImageGenerationSettings,
-  updateVideoGenerationSettings,
-  updateMcpServerTools,
+updateVideoGenerationSettings,
+updateStorageSettings,
+updateMcpServerTools,
   updateModelCallOrder,
   updateModelConfiguration,
   updateNetworkSafetySettings,
@@ -490,10 +491,27 @@ const LOCAL_UNCONFIGURED_PROVIDER_ORDER = new Map(
 
 const IMAGE_ASPECT_RATIO_OPTIONS = ["1:1", "3:4", "9:16", "4:3", "16:9", "3:2", "2:3", "21:9"];
 const IMAGE_SIZE_OPTIONS = ["1K", "2K", "4K", "1024x1024", "1536x1024", "1024x1536"];
+
+// Video generation presets — must match the backend tool's _ASPECT_RATIO_SIZES and _DURATION_PRESETS.
+const VIDEO_RESOLUTION_PRESETS = [
+  { value: "16:9", label: "16:9 · 1152×768", width: 1152, height: 768 },
+  { value: "9:16", label: "9:16 · 768×1152", width: 768, height: 1152 },
+  { value: "1:1", label: "1:1 · 768×768", width: 768, height: 768 },
+  { value: "4:3", label: "4:3 · 1024×768", width: 1024, height: 768 },
+  { value: "3:4", label: "3:4 · 768×1024", width: 768, height: 1024 },
+] as const;
+
+const VIDEO_DURATION_PRESETS = [
+  { value: "3s", label: "3s · 81 frames", numFrames: 81, frameRate: 24 },
+  { value: "5s", label: "5s · 121 frames", numFrames: 121, frameRate: 24 },
+  { value: "10s", label: "10s · 241 frames", numFrames: 241, frameRate: 24 },
+  { value: "18s", label: "18s · 441 frames", numFrames: 441, frameRate: 24 },
+] as const;
 const EMPTY_PENDING_RESTART_SECTIONS: PendingRestartSections = {
   runtime: false,
   browser: false,
   image: false,
+  video: false,
 };
 
 const DEFAULT_CUSTOM_MCP_FORM: CustomMcpForm = {
@@ -591,12 +609,18 @@ const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
   defaultAspectRatio: "1:1",
   defaultImageSize: "1K",
   maxImagesPerTurn: 4,
+  saveDir: "generated",
 };
 
 const DEFAULT_VIDEO_GENERATION_FORM: VideoGenerationSettingsUpdate = {
   enabled: false,
   provider: "agnes",
   model: "agnes-video-v2.0",
+  defaultWidth: 1152,
+  defaultHeight: 768,
+  defaultNumFrames: 121,
+  defaultFrameRate: 24,
+  saveDir: "generated",
 };
 
 const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
@@ -681,6 +705,7 @@ function imageGenerationFormFromPayload(payload: SettingsPayload): ImageGenerati
     defaultAspectRatio: payload.image_generation.default_aspect_ratio,
     defaultImageSize: payload.image_generation.default_image_size,
     maxImagesPerTurn: payload.image_generation.max_images_per_turn,
+    saveDir: payload.image_generation.save_dir,
   };
 }
 
@@ -691,6 +716,11 @@ function videoGenerationFormFromPayload(payload: SettingsPayload): VideoGenerati
     enabled: video.enabled,
     provider: video.provider,
     model: video.model,
+    defaultWidth: video.default_width,
+    defaultHeight: video.default_height,
+    defaultNumFrames: video.default_num_frames,
+    defaultFrameRate: video.default_frame_rate,
+    saveDir: video.save_dir,
   };
 }
 
@@ -879,6 +909,7 @@ export function SettingsView({
       setVideoGenerationForm(videoGenerationFormFromPayload(payload));
       setTranscriptionForm(transcriptionFormFromPayload(payload));
       setNetworkSafetyForm(networkSafetyFormFromPayload(payload));
+      setStorageForm({ mediaDir: payload.runtime.media_dir, uploadsDir: payload.runtime.uploads_dir });
       if (payload.restart_required_sections) {
         setPendingRestartSections(pendingRestartSectionsFromPayload(payload));
       }
@@ -1206,8 +1237,9 @@ export function SettingsView({
       imageGenerationForm.model !== settings.image_generation.model ||
       imageGenerationForm.defaultAspectRatio !== settings.image_generation.default_aspect_ratio ||
       imageGenerationForm.defaultImageSize !== settings.image_generation.default_image_size ||
-      imageGenerationForm.maxImagesPerTurn !== settings.image_generation.max_images_per_turn
-    );
+imageGenerationForm.maxImagesPerTurn !== settings.image_generation.max_images_per_turn ||
+imageGenerationForm.saveDir !== settings.image_generation.save_dir
+);
   }, [imageGenerationForm, settings]);
 
   const transcriptionDirty = useMemo(() => {
@@ -1534,8 +1566,13 @@ export function SettingsView({
     return (
       videoGenerationForm.enabled !== vg.enabled ||
       videoGenerationForm.provider !== vg.provider ||
-      videoGenerationForm.model !== vg.model
-    );
+      videoGenerationForm.model !== vg.model ||
+      videoGenerationForm.defaultWidth !== vg.default_width ||
+      videoGenerationForm.defaultHeight !== vg.default_height ||
+    videoGenerationForm.defaultNumFrames !== vg.default_num_frames ||
+    videoGenerationForm.defaultFrameRate !== vg.default_frame_rate ||
+    videoGenerationForm.saveDir !== vg.save_dir
+);
   }, [videoGenerationForm, settings]);
 
   const saveVideoGenerationSettings = async () => {
@@ -1553,6 +1590,38 @@ export function SettingsView({
       setError((err as Error).message);
     } finally {
       setVideoGenerationSaving(false);
+    }
+  };
+
+  const [storageForm, setStorageForm] = useState<{ mediaDir: string; uploadsDir: string }>(() =>
+    initialSettings
+      ? { mediaDir: initialSettings.runtime.media_dir, uploadsDir: initialSettings.runtime.uploads_dir }
+      : { mediaDir: "", uploadsDir: "" },
+  );
+  const [storageSaving, setStorageSaving] = useState(false);
+  const storageDirty = useMemo(() => {
+    if (!settings) return false;
+    return (
+      storageForm.mediaDir !== settings.runtime.media_dir ||
+      storageForm.uploadsDir !== settings.runtime.uploads_dir
+    );
+  }, [storageForm, settings]);
+
+  const saveStorageSettings = async () => {
+    if (!settings || !storageDirty || storageSaving) return;
+    setStorageSaving(true);
+    try {
+      const payload = await updateStorageSettings(token, storageForm);
+      applyPayload(payload);
+      if (payload.requires_restart) {
+        setPendingRestartSections((prev) => ({ ...prev, runtime: true }));
+      }
+      await maybeRestartHostEngine(payload);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setStorageSaving(false);
     }
   };
 
@@ -2425,6 +2494,11 @@ export function SettingsView({
             capabilityError={nanobotFeaturesError}
             onApiServiceAction={handleApiServiceAction}
             onInstallCapability={(name) => void installCapabilities([name])}
+            storageForm={storageForm}
+            storageDirty={storageDirty}
+            storageSaving={storageSaving}
+            onChangeStorageForm={setStorageForm}
+            onSaveStorageSettings={saveStorageSettings}
           />
         );
       case "advanced":
@@ -5173,7 +5247,20 @@ function ImageGenerationSettings({
               }
             />
           </SettingsRow>
-          <ReadOnlyRow title={tx("settings.rows.imageSaveDir", "Save directory")} value={settings.image_generation.save_dir} />
+          <SettingsRow
+            title={tx("settings.rows.imageSaveDir", "Save directory")}
+            description={tx(
+              "settings.help.saveDir",
+              "Relative path under media directory, or an absolute system path.",
+            )}
+          >
+            <Input
+              value={form.saveDir}
+              onChange={(e) => onChangeForm((prev) => ({ ...prev, saveDir: e.target.value }))}
+              placeholder="generated"
+              className="h-9 w-[280px] max-w-full rounded-full text-[13px]"
+            />
+          </SettingsRow>
           <RestartSettingsFooter
             dirty={dirty}
             saving={saving}
@@ -5232,6 +5319,25 @@ function VideoGenerationSettings({
     videoSettings.providers[0];
   const providerConfigured = !!selectedProvider?.configured;
   const missingCredential = form.enabled && !providerConfigured;
+
+  const videoResolutionOptions = VIDEO_RESOLUTION_PRESETS.map((p) => ({
+    name: p.value,
+    label: p.label,
+    configured: true,
+  }));
+  const videoResolutionValue =
+    VIDEO_RESOLUTION_PRESETS.find(
+      (p) => p.width === form.defaultWidth && p.height === form.defaultHeight,
+    )?.value ?? "";
+  const videoDurationOptions = VIDEO_DURATION_PRESETS.map((p) => ({
+    name: p.value,
+    label: p.label,
+    configured: true,
+  }));
+  const videoDurationValue =
+    VIDEO_DURATION_PRESETS.find(
+      (p) => p.numFrames === form.defaultNumFrames && p.frameRate === form.defaultFrameRate,
+    )?.value ?? "";
 
   return (
     <div className="space-y-7">
@@ -5307,22 +5413,58 @@ function VideoGenerationSettings({
                 "Type the model ID supported by this provider.",
               )}
               onChange={(model) => onChangeForm((prev) => ({ ...prev, model }))}
-              fetchModelsFn={null}
+              fetchModelsFn={undefined}
               forceCanFetch={selectedProvider?.configured ?? false}
             />
           </SettingsRow>
-          <ReadOnlyRow
+          <SettingsRow
             title={tx("settings.rows.videoSaveDir", "Save directory")}
-            value={videoSettings.save_dir}
-          />
-          <ReadOnlyRow
-            title={tx("settings.rows.videoResolution", "Default resolution")}
-            value={`${videoSettings.default_width}×${videoSettings.default_height}`}
-          />
-          <ReadOnlyRow
-            title={tx("settings.rows.videoFrameRate", "Default frame rate")}
-            value={`${videoSettings.default_frame_rate} fps`}
-          />
+            description={tx(
+              "settings.help.saveDir",
+              "Relative path under media directory, or an absolute system path.",
+            )}
+          >
+            <Input
+              value={form.saveDir}
+              onChange={(e) => onChangeForm((prev) => ({ ...prev, saveDir: e.target.value }))}
+              placeholder="generated"
+              className="h-9 w-[280px] max-w-full rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow title={tx("settings.rows.videoResolution", "Default resolution")}>
+            <ProviderPicker
+              providers={videoResolutionOptions}
+              value={videoResolutionValue}
+              emptyLabel={tx("settings.video.selectResolution", "Select resolution")}
+              onChange={(value) => {
+                const match = VIDEO_RESOLUTION_PRESETS.find((p) => p.value === value);
+                if (match) {
+                  onChangeForm((prev) => ({
+                    ...prev,
+                    defaultWidth: match.width,
+                    defaultHeight: match.height,
+                  }));
+                }
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow title={tx("settings.rows.videoDuration", "Default duration")}>
+            <ProviderPicker
+              providers={videoDurationOptions}
+              value={videoDurationValue}
+              emptyLabel={tx("settings.video.selectDuration", "Select duration")}
+              onChange={(value) => {
+                const match = VIDEO_DURATION_PRESETS.find((p) => p.value === value);
+                if (match) {
+                  onChangeForm((prev) => ({
+                    ...prev,
+                    defaultNumFrames: match.numFrames,
+                    defaultFrameRate: match.frameRate,
+                  }));
+                }
+              }}
+            />
+          </SettingsRow>
           <RestartSettingsFooter
             dirty={dirty}
             saving={saving}
@@ -8621,6 +8763,11 @@ function RuntimeSettings({
   capabilityError,
   onApiServiceAction,
   onInstallCapability,
+  storageForm,
+  storageDirty,
+  storageSaving,
+  onChangeStorageForm,
+  onSaveStorageSettings,
 }: {
   form: AgentSettingsDraft;
   settings: SettingsPayload;
@@ -8640,6 +8787,11 @@ function RuntimeSettings({
     values?: { host: string; port: number; timeout: number; apiKey?: string },
   ) => void;
   onInstallCapability: (name: string) => void;
+  storageForm: { mediaDir: string; uploadsDir: string };
+  storageDirty: boolean;
+  storageSaving: boolean;
+  onChangeStorageForm: Dispatch<SetStateAction<{ mediaDir: string; uploadsDir: string }>>;
+  onSaveStorageSettings: () => void;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -8903,6 +9055,50 @@ function RuntimeSettings({
               ) : null}
             </>
           ) : null}
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>{tx("settings.sections.storage", "Storage paths")}</SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.rows.mediaDir", "Media directory")}
+            description={tx(
+              "settings.help.mediaDir",
+              "Root directory for all media files. Leave empty to use the default (~/.nanobot/media/).",
+            )}
+          >
+            <Input
+              value={storageForm.mediaDir}
+              onChange={(e) => onChangeStorageForm((prev) => ({ ...prev, mediaDir: e.target.value }))}
+              placeholder="~/.nanobot/media/"
+              className="h-9 w-[280px] max-w-full rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.uploadsDir", "Uploads directory")}
+            description={tx(
+              "settings.help.uploadsDir",
+              "Subdirectory under media dir for user uploads, or an absolute path. Leave empty to use media root.",
+            )}
+          >
+            <Input
+              value={storageForm.uploadsDir}
+              onChange={(e) => onChangeStorageForm((prev) => ({ ...prev, uploadsDir: e.target.value }))}
+              placeholder="uploads"
+              className="h-9 w-[280px] max-w-full rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <RestartSettingsFooter
+            dirty={storageDirty}
+            saving={storageSaving}
+            pendingRestart={requiresRestartPending}
+            dirtyMessage={tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")}
+            pendingMessage={tx("settings.status.savedRestartApply", "Saved. Restart when ready.")}
+            onSave={onSaveStorageSettings}
+            onRestart={onRestart}
+            isRestarting={isRestarting}
+          />
         </SettingsGroup>
       </section>
 

@@ -1129,6 +1129,7 @@ export async function updateImageGenerationSettings(
   query.set("default_aspect_ratio", update.defaultAspectRatio);
   query.set("default_image_size", update.defaultImageSize);
   query.set("max_images_per_turn", String(update.maxImagesPerTurn));
+  query.set("save_dir", update.saveDir);
   return request<SettingsPayload>(
     `${base}/api/settings/image-generation/update?${query}`,
     token,
@@ -1144,8 +1145,27 @@ export async function updateVideoGenerationSettings(
   query.set("enabled", String(update.enabled));
   query.set("provider", update.provider);
   query.set("model", update.model);
+  query.set("default_width", String(update.defaultWidth));
+  query.set("default_height", String(update.defaultHeight));
+  query.set("default_num_frames", String(update.defaultNumFrames));
+  query.set("default_frame_rate", String(update.defaultFrameRate));
+  query.set("save_dir", update.saveDir);
   return request<SettingsPayload>(
     `${base}/api/settings/video-generation/update?${query}`,
+    token,
+  );
+}
+
+export async function updateStorageSettings(
+  token: string,
+  update: { mediaDir: string; uploadsDir: string },
+  base: string = "",
+): Promise<SettingsPayload> {
+  const query = new URLSearchParams();
+  query.set("media_dir", update.mediaDir);
+  query.set("uploads_dir", update.uploadsDir);
+  return request<SettingsPayload>(
+    `${base}/api/settings/storage/update?${query}`,
     token,
   );
 }

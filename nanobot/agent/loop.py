@@ -1632,12 +1632,19 @@ class AgentLoop:
         session = ctx.session
 
         # Register uploaded media files in the session's artifact registry.
+        # Skip files that are already registered (e.g. by the WebSocket upload
+        # handler) to avoid duplicate IDs for the same file.
         if ctx.kind is TurnKind.USER and msg.media:
             from nanobot.utils.helpers import detect_file_mime, mime_to_artifact_type
             registry = session.artifact_registry
             artifact_ids: list[str] = []
+            registered_any = False
             for path in msg.media:
                 if not isinstance(path, str) or not path:
+                    continue
+                existing = registry.find_by_path(path)
+                if existing is not None:
+                    artifact_ids.append(existing.id)
                     continue
                 try:
                     mime = detect_file_mime(path)
@@ -1650,14 +1657,66 @@ class AgentLoop:
                         source="upload",
                     )
                     artifact_ids.append(entry.id)
+                    registered_any = True
                 except (OSError, ValueError):
                     logger.debug("Could not register artifact for {}", path)
             if artifact_ids:
-                session.sync_artifact_registry()
-                self.sessions.save(session)
+                if registered_any:
+                    session.sync_artifact_registry()
+                    self.sessions.save(session)
+                    # Send artifact notification to the user (applies to ALL
+                    # channels).  WebSocket already sent it in _dispatch_envelope,
+                    # so skip if the files were pre-registered there.
+                    try:
+                        from nanobot.utils.artifact_registry import format_artifact_notification
+
+                        notif_artifacts: list[dict[str, str]] = []
+                        for path in msg.media:
+                            if not isinstance(path, str) or not path:
+                                continue
+                            entry = registry.find_by_path(path)
+                            if entry is None:
+                                continue
+                            notif_artifacts.append({
+                                "id": entry.id,
+                                "type": entry.type,
+                                "filename": entry.filename,
+                            })
+                        if notif_artifacts:
+                            notification = format_artifact_notification(notif_artifacts)
+                            await self.bus.publish_outbound(OutboundMessage(
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content=notification,
+                            ))
+                    except Exception:
+                        logger.debug("Failed to send artifact upload notification")
                 # Attach artifact IDs to the inbound message for downstream use
                 ctx.msg = dataclasses.replace(msg, artifact_ids=artifact_ids)
                 msg = ctx.msg
+
+        # Resolve artifact ID references in user text (e.g. "用1001做参考图").
+        # Replaces bare IDs with descriptive references and adds resolved
+        # file paths to msg.media so the LLM can see the referenced files.
+        if ctx.kind is TurnKind.USER and isinstance(msg.content, str) and msg.content:
+            from nanobot.utils.artifact_registry import resolve_artifact_references
+            modified_text, new_media = resolve_artifact_references(
+                msg.content,
+                session.artifact_registry,
+                existing_media=list(msg.media) if msg.media else None,
+            )
+            if new_media:
+                updated_media = list(msg.media or []) + new_media
+                ctx.msg = dataclasses.replace(
+                    msg,
+                    content=modified_text,
+                    media=updated_media,
+                )
+                msg = ctx.msg
+            elif modified_text != msg.content:
+                ctx.msg = dataclasses.replace(msg, content=modified_text)
+                msg = ctx.msg
+
         self._remember_unified_session_route(
             session,
             msg,

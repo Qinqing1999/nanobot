@@ -13,6 +13,7 @@ from nanobot.providers.video_generation import (
     AgnesVideoGenerationClient,
     VideoGenerationError,
     VideoTaskResponse,
+    _normalize_status,
     get_video_gen_provider,
 )
 
@@ -305,3 +306,203 @@ async def test_is_retryable_429_non_429_returns_false() -> None:
         request=httpx.Request("POST", "https://example.com"),
     )
     assert AgnesVideoGenerationClient._is_retryable_429(response) is False
+
+
+# -- Status normalization tests ---------------------------------------------
+
+
+def test_normalize_status_succeed() -> None:
+    """'succeed' should be normalized to 'completed'."""
+    assert _normalize_status("succeed") == "completed"
+
+
+def test_normalize_status_success() -> None:
+    """'success' should be normalized to 'completed'."""
+    assert _normalize_status("success") == "completed"
+
+
+def test_normalize_status_done() -> None:
+    """'done' should be normalized to 'completed'."""
+    assert _normalize_status("done") == "completed"
+
+
+def test_normalize_status_finished() -> None:
+    """'finished' should be normalized to 'completed'."""
+    assert _normalize_status("finished") == "completed"
+
+
+def test_normalize_status_completed_unchanged() -> None:
+    """'completed' stays 'completed'."""
+    assert _normalize_status("completed") == "completed"
+
+
+def test_normalize_status_in_progress_unchanged() -> None:
+    """'in_progress' stays 'in_progress'."""
+    assert _normalize_status("in_progress") == "in_progress"
+
+
+def test_normalize_status_case_insensitive() -> None:
+    """Normalization is case-insensitive."""
+    assert _normalize_status("SUCCEED") == "completed"
+    assert _normalize_status("Success") == "completed"
+
+
+# -- URL extraction tests ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_url_in_metadata() -> None:
+    """Video URL extracted from metadata.url (standard location)."""
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: _mock_response(200, {
+                "video_id": "vid_1",
+                "status": "completed",
+                "progress": 100,
+                "metadata": {"url": "https://cdn.example.com/v1.mp4"},
+            })
+        )),
+    )
+    status = await client.get_task_status("vid_1")
+    assert status.video_url == "https://cdn.example.com/v1.mp4"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_url_top_level() -> None:
+    """Video URL extracted from top-level 'url' field."""
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: _mock_response(200, {
+                "video_id": "vid_2",
+                "status": "succeed",
+                "progress": 100,
+                "url": "https://cdn.example.com/v2.mp4",
+            })
+        )),
+    )
+    status = await client.get_task_status("vid_2")
+    assert status.status == "completed"  # normalized
+    assert status.video_url == "https://cdn.example.com/v2.mp4"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_url_video_url_field() -> None:
+    """Video URL extracted from top-level 'video_url' field."""
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: _mock_response(200, {
+                "video_id": "vid_3",
+                "status": "done",
+                "progress": 100,
+                "video_url": "https://cdn.example.com/v3.mp4",
+            })
+        )),
+    )
+    status = await client.get_task_status("vid_3")
+    assert status.status == "completed"  # normalized
+    assert status.video_url == "https://cdn.example.com/v3.mp4"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_url_in_result_object() -> None:
+    """Video URL extracted from nested result.url field."""
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: _mock_response(200, {
+                "video_id": "vid_4",
+                "status": "success",
+                "progress": 100,
+                "result": {"url": "https://cdn.example.com/v4.mp4"},
+            })
+        )),
+    )
+    status = await client.get_task_status("vid_4")
+    assert status.status == "completed"  # normalized
+    assert status.video_url == "https://cdn.example.com/v4.mp4"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_no_url() -> None:
+    """No URL anywhere returns None."""
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda req: _mock_response(200, {
+                "video_id": "vid_5",
+                "status": "in_progress",
+                "progress": 80,
+            })
+        )),
+    )
+    status = await client.get_task_status("vid_5")
+    assert status.video_url is None
+    await client._client.aclose()
+
+
+# -- get_task_status 429 retry tests -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_429_retryable() -> None:
+    """get_task_status retries on retryable 429 and succeeds."""
+    call_count = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            return httpx.Response(
+                429,
+                text='{"error": {"message": "rate_limit_exceeded"}}',
+                headers={"retry-after": "0.1"},
+                request=req,
+            )
+        return _mock_response(200, {
+            "video_id": "vid_retry",
+            "status": "completed",
+            "progress": 100,
+            "metadata": {"url": "https://cdn.example.com/v.mp4"},
+        })
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    status = await client.get_task_status("vid_retry")
+    assert call_count == 2
+    assert status.status == "completed"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_task_status_429_quota_no_retry() -> None:
+    """get_task_status does NOT retry on quota-exceeded 429."""
+    call_count = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            429,
+            text='{"error": {"message": "insufficient_quota"}}',
+            request=req,
+        )
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(VideoGenerationError, match="quota exceeded"):
+        await client.get_task_status("vid_quota")
+    assert call_count == 1
+    await client._client.aclose()

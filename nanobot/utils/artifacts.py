@@ -57,6 +57,14 @@ def _safe_relative_dir(save_dir: str) -> Path:
 
 
 def _artifact_root(save_dir: str) -> Path:
+    save_dir = save_dir.strip()
+    if not save_dir:
+        raise ArtifactError("save_dir must not be empty")
+    # Absolute path: use directly (admin-configured system path)
+    candidate = Path(save_dir).expanduser()
+    if candidate.is_absolute():
+        return ensure_dir(candidate.resolve(strict=False))
+    # Relative path: resolve under the media root
     media_root = get_media_dir().resolve()
     root = (media_root / _safe_relative_dir(save_dir)).resolve()
     try:
@@ -114,7 +122,9 @@ def generated_image_tool_result(artifacts: list[dict[str, Any]]) -> str:
             "next_step": (
                 "Use these artifact paths as reference_images for follow-up edits. "
                 "Call the message tool with the artifact paths in the media parameter "
-                "to deliver the images to the user. Keep raw paths internal unless the "
+                "to deliver the images to the user. "
+                "Include the artifact_id in your message text so the user can reference it later "
+                "(e.g. '制品 ID: 1xxx'). Keep raw file paths internal unless the "
                 "user asks for debug details."
             ),
         },
@@ -181,6 +191,7 @@ def generated_video_tool_result(artifact: dict[str, Any]) -> str:
             "artifact": artifact,
             "next_step": (
                 "视频已生成。使用 message 工具发送 artifact 的 path 给用户。"
+                "在消息中包含 artifact_id（制品 ID），让用户可以后续引用。"
                 "生成的视频已注册到制品注册表，可通过制品 ID 在后续对话中引用。"
             ),
         },

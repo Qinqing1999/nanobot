@@ -338,6 +338,16 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     # Update the loop's session index tracker so future messages route here
     loop._session_indices[base_key] = next_index  # pyright: ignore[reportPrivateUsage]
 
+    # Persist a minimal session to disk so /sessions can discover it.
+    # Without this, list_sessions() (which scans the filesystem) would not
+    # see the new session until the first message is sent.
+    try:
+        new_session = loop.sessions.get_or_create(new_key)
+        new_session.metadata["title"] = "New Conversation"
+        loop.sessions.save(new_session)
+    except Exception:
+        logger.debug("Failed to persist new session {}", new_key, exc_info=True)
+
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
         content=(
