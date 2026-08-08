@@ -9,6 +9,7 @@ import type {
   CliAppsPayload,
   FilePreviewPayload,
   ImageGenerationSettingsUpdate,
+  VideoGenerationSettingsUpdate,
   McpPresetsPayload,
   MarketplaceProvider,
   NanobotFeaturesPayload,
@@ -1130,6 +1131,21 @@ export async function updateImageGenerationSettings(
   query.set("max_images_per_turn", String(update.maxImagesPerTurn));
   return request<SettingsPayload>(
     `${base}/api/settings/image-generation/update?${query}`,
+    token,
+  );
+}
+
+export async function updateVideoGenerationSettings(
+  token: string,
+  update: VideoGenerationSettingsUpdate,
+  base: string = "",
+): Promise<SettingsPayload> {
+  const query = new URLSearchParams();
+  query.set("enabled", String(update.enabled));
+  query.set("provider", update.provider);
+  query.set("model", update.model);
+  return request<SettingsPayload>(
+    `${base}/api/settings/video-generation/update?${query}`,
     token,
   );
 }

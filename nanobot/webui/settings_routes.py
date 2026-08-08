@@ -71,6 +71,7 @@ from nanobot.webui.settings_api import (
     update_network_safety_settings,
     update_provider_settings,
     update_transcription_settings,
+    update_video_generation_settings,
     update_web_search_settings,
 )
 from nanobot.webui.version_check import check_for_update
@@ -185,6 +186,8 @@ class WebUISettingsRouter:
             return await self._handle_settings_image_generation_update(request)
         if path == "/api/settings/image-generation/models":
             return await self._handle_settings_image_generation_models(request)
+        if path == "/api/settings/video-generation/update":
+            return await self._handle_settings_video_generation_update(request)
         if path == "/api/settings/transcription/update":
             return self._handle_settings_transcription_update(request)
         if path == "/api/settings/network-safety/update":
@@ -659,6 +662,15 @@ class WebUISettingsRouter:
             return self._error_response(e.status, e.message)
         payload = await self._apply_image_generation_runtime_change(payload)
         return self._json_response(self._with_restart_state(payload, section="image"))
+
+    async def _handle_settings_video_generation_update(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = update_video_generation_settings(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload, section="video"))
 
     async def _apply_image_generation_runtime_change(
         self,

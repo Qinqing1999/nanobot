@@ -611,6 +611,28 @@ export interface SettingsPayload {
       default_model?: string | null;
     }>;
   };
+  video_generation?: {
+    enabled: boolean;
+    provider: string;
+    provider_configured: boolean;
+    model: string;
+    save_dir: string;
+    default_width: number;
+    default_height: number;
+    default_num_frames: number;
+    default_frame_rate: number;
+    providers: Array<{
+      name: string;
+      label: string;
+      configured: boolean;
+      auth_type?: "api_key" | "oauth";
+      api_key_hint?: string | null;
+      api_base?: string | null;
+      default_api_base?: string | null;
+      models?: string[];
+      default_model?: string | null;
+    }>;
+  };
   transcription?: {
     enabled: boolean;
     provider: string;
@@ -1110,6 +1132,12 @@ export interface ImageGenerationSettingsUpdate {
   defaultAspectRatio: string;
   defaultImageSize: string;
   maxImagesPerTurn: number;
+}
+
+export interface VideoGenerationSettingsUpdate {
+  enabled: boolean;
+  provider: string;
+  model: string;
 }
 
 export interface TranscriptionSettingsUpdate {

@@ -1057,6 +1057,63 @@ def _image_generation_provider_rows(config: Config) -> list[dict[str, Any]]:
     return rows
 
 
+def _video_generation_payload(config: Config) -> dict[str, Any]:
+    """Build the video_generation section of the settings payload."""
+    try:
+        video_config = config.tools.video_generation
+    except (AttributeError, TypeError):
+        return {
+            "enabled": False,
+            "provider": "agnes",
+            "provider_configured": False,
+            "model": "agnes-video-v2.0",
+            "save_dir": "generated",
+            "default_width": 1152,
+            "default_height": 768,
+            "default_num_frames": 121,
+            "default_frame_rate": 24,
+            "providers": [],
+        }
+
+    # Build provider rows from video_gen_provider_configs
+    providers: list[dict[str, Any]] = []
+    for name, _ in [(video_config.provider, None)]:
+        spec = find_by_name(name)
+        provider_config = getattr(config.providers, name, None)
+        configured = bool(getattr(provider_config, "api_key", None))
+        providers.append({
+            "name": name,
+            "label": spec.label if spec is not None else name,
+            "configured": configured,
+            "auth_type": "api_key",
+            "api_key_hint": _mask_secret_hint(
+                getattr(provider_config, "api_key", None)
+            ),
+            "api_base": getattr(provider_config, "api_base", None),
+            "default_api_base": (
+                spec.default_api_base if spec and spec.default_api_base else None
+            ),
+            "models": ["agnes-video-v2.0"],
+            "default_model": "agnes-video-v2.0",
+        })
+
+    selected_provider_config = getattr(config.providers, video_config.provider, None)
+    provider_configured = bool(getattr(selected_provider_config, "api_key", None))
+
+    return {
+        "enabled": video_config.enabled,
+        "provider": video_config.provider,
+        "provider_configured": provider_configured,
+        "model": video_config.model,
+        "save_dir": video_config.save_dir,
+        "default_width": video_config.default_width,
+        "default_height": video_config.default_height,
+        "default_num_frames": video_config.default_num_frames,
+        "default_frame_rate": video_config.default_frame_rate,
+        "providers": providers,
+    }
+
+
 _DEFAULT_REASONING_EFFORT_VALUES: tuple[str, ...] = ("", "low", "medium", "high")
 
 
@@ -1289,6 +1346,7 @@ def settings_payload(
             "save_dir": image_config.save_dir,
             "providers": image_providers,
         },
+        "video_generation": _video_generation_payload(config),
         "transcription": {
             "enabled": transcription.enabled,
             "provider": transcription.provider,
@@ -2283,6 +2341,46 @@ def update_image_generation_settings(query: QueryParams) -> dict[str, Any]:
         save_config(config)
     return settings_payload(requires_restart=changed)
 
+
+def update_video_generation_settings(query: QueryParams) -> dict[str, Any]:
+    """Update video generation tool settings."""
+    config = load_config()
+    try:
+        video_config = config.tools.video_generation
+    except (AttributeError, TypeError):
+        raise WebUISettingsError("video generation is not available in this build")
+    changed = False
+
+    enabled = _query_first(query, "enabled")
+    if enabled is not None:
+        parsed_enabled = _parse_bool(enabled, "enabled")
+        if video_config.enabled != parsed_enabled:
+            video_config.enabled = parsed_enabled
+            changed = True
+
+    model = _query_first(query, "model")
+    if model is not None:
+        model = model.strip()
+        if not model:
+            raise WebUISettingsError("video generation model is required")
+        if len(model) > 200:
+            raise WebUISettingsError("video generation model is too long")
+        if video_config.model != model:
+            video_config.model = model
+            changed = True
+
+    provider_name = _query_first(query, "provider")
+    if provider_name is not None:
+        provider_name = provider_name.strip().lower()
+        if not provider_name:
+            raise WebUISettingsError("video generation provider is required")
+        if video_config.provider != provider_name:
+            video_config.provider = provider_name
+            changed = True
+
+    if changed:
+        save_config(config)
+    return settings_payload(requires_restart=changed)
 
 async def image_generation_models_payload(query: QueryParams) -> dict[str, Any]:
     """Fetch an image generation provider's model list for Settings.

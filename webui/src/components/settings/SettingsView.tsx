@@ -57,6 +57,7 @@ import {
   Trash2,
   Triangle,
   Waves,
+  Video,
   X,
   Zap,
   type LucideIcon,
@@ -141,6 +142,7 @@ import {
   stopApiService,
   updateAutomation,
   updateImageGenerationSettings,
+  updateVideoGenerationSettings,
   updateMcpServerTools,
   updateModelCallOrder,
   updateModelConfiguration,
@@ -181,6 +183,7 @@ import type {
   CliAppInfo,
   CliAppsPayload,
   ImageGenerationSettingsUpdate,
+  VideoGenerationSettingsUpdate,
   McpPresetInfo,
   McpPresetsPayload,
   NanobotFeatureInfo,
@@ -205,6 +208,7 @@ export type SettingsSectionKey =
   | "appearance"
   | "models"
   | "image"
+  | "video"
   | "voice"
   | "browser"
   | "channels"
@@ -247,7 +251,7 @@ interface AgentSettingsDraft {
   toolHintMaxLength: number;
 }
 
-type PendingRestartSection = "runtime" | "browser" | "image";
+type PendingRestartSection = "runtime" | "browser" | "image" | "video";
 type PendingRestartSections = Record<PendingRestartSection, boolean>;
 type RestartAwarePayload = {
   requires_restart?: boolean;
@@ -589,6 +593,12 @@ const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
   maxImagesPerTurn: 4,
 };
 
+const DEFAULT_VIDEO_GENERATION_FORM: VideoGenerationSettingsUpdate = {
+  enabled: false,
+  provider: "agnes",
+  model: "agnes-video-v2.0",
+};
+
 const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
   enabled: true,
   provider: "groq",
@@ -674,6 +684,16 @@ function imageGenerationFormFromPayload(payload: SettingsPayload): ImageGenerati
   };
 }
 
+function videoGenerationFormFromPayload(payload: SettingsPayload): VideoGenerationSettingsUpdate {
+  const video = payload.video_generation;
+  if (!video) return { ...DEFAULT_VIDEO_GENERATION_FORM };
+  return {
+    enabled: video.enabled,
+    provider: video.provider,
+    model: video.model,
+  };
+}
+
 function transcriptionFormFromPayload(payload: SettingsPayload): TranscriptionSettingsUpdate {
   const transcription = payload.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
   return {
@@ -704,6 +724,7 @@ function pendingRestartSectionsFromPayload(payload: SettingsPayload): PendingRes
     runtime: sections.includes("runtime"),
     browser: sections.includes("browser"),
     image: sections.includes("image"),
+    video: sections.includes("video"),
   };
 }
 
@@ -808,6 +829,13 @@ export function SettingsView({
         ? imageGenerationFormFromPayload(initialSettings)
         : DEFAULT_IMAGE_GENERATION_FORM,
   );
+  const [videoGenerationForm, setVideoGenerationForm] = useState<VideoGenerationSettingsUpdate>(
+    () =>
+      initialSettings
+        ? videoGenerationFormFromPayload(initialSettings)
+        : DEFAULT_VIDEO_GENERATION_FORM,
+  );
+  const [videoGenerationSaving, setVideoGenerationSaving] = useState(false);
   const [transcriptionForm, setTranscriptionForm] = useState<TranscriptionSettingsUpdate>(
     () => initialSettings ? transcriptionFormFromPayload(initialSettings) : DEFAULT_TRANSCRIPTION_FORM,
   );
@@ -848,6 +876,7 @@ export function SettingsView({
       setModelCallOrder(payload.model_call_order ?? []);
       setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
       setImageGenerationForm(imageGenerationFormFromPayload(payload));
+      setVideoGenerationForm(videoGenerationFormFromPayload(payload));
       setTranscriptionForm(transcriptionFormFromPayload(payload));
       setNetworkSafetyForm(networkSafetyFormFromPayload(payload));
       if (payload.restart_required_sections) {
@@ -1496,6 +1525,34 @@ export function SettingsView({
       setError((err as Error).message);
     } finally {
       setImageGenerationSaving(false);
+    }
+  };
+
+  const videoGenerationDirty = useMemo(() => {
+    if (!settings?.video_generation) return false;
+    const vg = settings.video_generation;
+    return (
+      videoGenerationForm.enabled !== vg.enabled ||
+      videoGenerationForm.provider !== vg.provider ||
+      videoGenerationForm.model !== vg.model
+    );
+  }, [videoGenerationForm, settings]);
+
+  const saveVideoGenerationSettings = async () => {
+    if (!settings?.video_generation || !videoGenerationDirty || videoGenerationSaving) return;
+    setVideoGenerationSaving(true);
+    try {
+      const payload = await updateVideoGenerationSettings(token, videoGenerationForm);
+      applyPayload(payload);
+      if (payload.requires_restart) {
+        setPendingRestartSections((prev) => ({ ...prev, video: true }));
+      }
+      await maybeRestartHostEngine(payload);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setVideoGenerationSaving(false);
     }
   };
 
@@ -2198,6 +2255,23 @@ export function SettingsView({
             requiresRestartPending={pendingRestartSections.image}
           />
         );
+      case "video":
+        return settings.video_generation ? (
+          <VideoGenerationSettings
+            token={token}
+            settings={settings}
+            form={videoGenerationForm}
+            dirty={videoGenerationDirty}
+            saving={videoGenerationSaving}
+            onChangeForm={setVideoGenerationForm}
+            onSave={saveVideoGenerationSettings}
+            onOpenProviders={() => selectSection("models")}
+            showBrandLogos={localPrefs.brandLogos}
+            onRestart={restartViaSettingsSurface}
+            isRestarting={isRestarting || hostEngineApplying}
+            requiresRestartPending={pendingRestartSections.video}
+          />
+        ) : null;
       case "voice":
         return (
           <TranscriptionSettings
@@ -2523,6 +2597,7 @@ const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fal
   { key: "appearance", icon: Palette, fallback: "Appearance" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
   { key: "image", icon: ImageIcon, fallback: "Image" },
+  { key: "video", icon: Video, fallback: "Video" },
   { key: "voice", icon: Mic, fallback: "Voice" },
   { key: "browser", icon: Globe2, fallback: "Web" },
   { key: "channels", icon: MessageCircle, fallback: "Channels" },
@@ -2805,6 +2880,17 @@ function OverviewSettings({
             showBrandLogos={showBrandLogos}
             onClick={() => onSelectSection("image")}
           />
+          {settings.video_generation ? (
+            <OverviewListRow
+              icon={Video}
+              valueLogoProvider={settings.video_generation.provider}
+              title={tx("settings.overview.videoGeneration", "Video generation")}
+              value={settings.video_generation.enabled ? tx("settings.values.enabled", "Enabled") : tx("settings.values.disabled", "Disabled")}
+              caption={settings.video_generation.provider_configured ? tx("settings.values.configured", "Configured") : tx("settings.values.notConfigured", "Not configured")}
+              showBrandLogos={showBrandLogos}
+              onClick={() => onSelectSection("video")}
+            />
+          ) : null}
           <OverviewListRow
             icon={Mic}
             valueLogoProvider={transcription.provider}
@@ -5096,6 +5182,155 @@ function ImageGenerationSettings({
             message={
               missingCredential
                 ? tx("settings.image.missingCredential", "Configure this provider before enabling image generation.")
+                : undefined
+            }
+            dirtyMessage={tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")}
+            pendingMessage={tx("settings.status.savedRestartApply", "Saved. Restart when ready.")}
+            onSave={onSave}
+            onRestart={onRestart}
+            isRestarting={isRestarting}
+          />
+        </SettingsGroup>
+      </section>
+    </div>
+  );
+}
+
+function VideoGenerationSettings({
+  token,
+  settings,
+  form,
+  dirty,
+  saving,
+  onChangeForm,
+  onSave,
+  onOpenProviders,
+  showBrandLogos,
+  onRestart,
+  isRestarting,
+  requiresRestartPending,
+}: {
+  token: string;
+  settings: SettingsPayload;
+  form: VideoGenerationSettingsUpdate;
+  dirty: boolean;
+  saving: boolean;
+  onChangeForm: Dispatch<SetStateAction<VideoGenerationSettingsUpdate>>;
+  onSave: () => void;
+  onOpenProviders: () => void;
+  showBrandLogos: boolean;
+  onRestart?: () => void;
+  isRestarting?: boolean;
+  requiresRestartPending: boolean;
+}) {
+  const { t } = useTranslation();
+  const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+  const videoSettings = settings.video_generation;
+  if (!videoSettings) return null;
+  const selectedProvider =
+    videoSettings.providers.find((provider) => provider.name === form.provider) ??
+    videoSettings.providers[0];
+  const providerConfigured = !!selectedProvider?.configured;
+  const missingCredential = form.enabled && !providerConfigured;
+
+  return (
+    <div className="space-y-7">
+      <section>
+        <SettingsSectionTitle>
+          {tx("settings.sections.videoGeneration", "Video generation")}
+        </SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow title={tx("settings.rows.videoGeneration", "Video generation")}>
+            <ToggleButton
+              checked={form.enabled}
+              onChange={(enabled) => onChangeForm((prev) => ({ ...prev, enabled }))}
+              ariaLabel={tx("settings.rows.videoGeneration", "Video generation")}
+              label={form.enabled ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+            />
+          </SettingsRow>
+          <SettingsRow title={tx("settings.rows.videoProvider", "Video provider")}>
+            <ProviderPicker
+              providers={videoSettings.providers}
+              value={form.provider}
+              emptyLabel={tx("settings.video.selectProvider", "Select provider")}
+              showProviderLogos={showBrandLogos}
+              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider }))}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.videoProviderStatus", "Provider status")}
+            description={tx(
+              "settings.help.videoProviderStatus",
+              "Video generation reuses provider credentials from Providers.",
+            )}
+          >
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <StatusPill tone={providerConfigured ? "success" : "neutral"}>
+                {providerConfigured
+                  ? tx("settings.values.configured", "Configured")
+                  : tx("settings.values.notConfigured", "Not configured")}
+              </StatusPill>
+              {!providerConfigured ? (
+                <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
+                  {tx("settings.video.configureProvider", "Configure provider")}
+                </Button>
+              ) : null}
+            </div>
+          </SettingsRow>
+          <SettingsRow title={tx("settings.rows.videoProviderBase", "Provider base")}>
+            <span className="max-w-[320px] truncate text-right text-[13px] text-muted-foreground">
+              {selectedProvider?.api_base || selectedProvider?.default_api_base || selectedProvider?.name || tx("settings.values.notAvailable", "Not available")}
+            </span>
+          </SettingsRow>
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>
+          {tx("settings.sections.videoDefaults", "Defaults")}
+        </SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow title={tx("settings.rows.videoModel", "Video model")}>
+            <ModelIdPicker
+              token={token}
+              settings={settings}
+              provider={form.provider}
+              value={form.model}
+              showProviderLogos={showBrandLogos}
+              emptyLabel={tx("settings.video.selectModel", "Select video model")}
+              searchPlaceholder={tx(
+                "settings.video.searchOrTypeModel",
+                "Search or type model ID",
+              )}
+              emptyMessage={tx(
+                "settings.video.typeModelId",
+                "Type the model ID supported by this provider.",
+              )}
+              onChange={(model) => onChangeForm((prev) => ({ ...prev, model }))}
+              fetchModelsFn={null}
+              forceCanFetch={selectedProvider?.configured ?? false}
+            />
+          </SettingsRow>
+          <ReadOnlyRow
+            title={tx("settings.rows.videoSaveDir", "Save directory")}
+            value={videoSettings.save_dir}
+          />
+          <ReadOnlyRow
+            title={tx("settings.rows.videoResolution", "Default resolution")}
+            value={`${videoSettings.default_width}×${videoSettings.default_height}`}
+          />
+          <ReadOnlyRow
+            title={tx("settings.rows.videoFrameRate", "Default frame rate")}
+            value={`${videoSettings.default_frame_rate} fps`}
+          />
+          <RestartSettingsFooter
+            dirty={dirty}
+            saving={saving}
+            pendingRestart={requiresRestartPending}
+            disabled={missingCredential}
+            message={
+              missingCredential
+                ? tx("settings.video.missingCredential", "Configure this provider before enabling video generation.")
                 : undefined
             }
             dirtyMessage={tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")}
