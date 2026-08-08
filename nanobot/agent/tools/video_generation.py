@@ -63,6 +63,7 @@ class VideoGenerationToolConfig(Base):
     save_dir: str = "generated"
     default_width: int = 1152
     default_height: int = 768
+    default_aspect_ratio: str = "16:9"
     default_num_frames: int = 121
     default_frame_rate: int = 24
 
@@ -73,17 +74,27 @@ class VideoGenerationToolConfig(Base):
             "视频内容描述。包含场景、主体、动作、镜头运动、光线等。",
             min_length=1,
         ),
-        image=StringSchema(
-            "图生视频的参考图片 artifact ID 或 URL。使用 artifact ID 引用之前上传/生成的图片。",
+        reference_images=ArraySchema(
+            StringSchema("参考图片 artifact ID 或 URL"),
+            description=(
+                "参考图片，支持 1-4 张。1 张为图生视频 (img2vid)，"
+                "2-4 张为多图参考 (multi_reference)。"
+                "使用 artifact ID 引用之前上传/生成的图片。"
+            ),
             nullable=True,
         ),
         keyframe_images=ArraySchema(
             StringSchema("关键帧图片 artifact ID 或 URL"),
-            description="关键帧动画模式的输入图片。2-4 张图片在之间生成过渡。",
+            description=(
+                "关键帧动画模式的输入图片，恰好 2 张：首帧和尾帧。"
+                "与 reference_images 互斥，同时传入时 reference_images 优先。"
+            ),
             nullable=True,
         ),
         mode=StringSchema(
-            "生成模式: ti2vid (文生视频) 或 keyframes (关键帧动画)。",
+            "生成模式: ti2vid (文生视频), img2vid (单图生视频), "
+            "multi_reference (多图参考), keyframes (关键帧动画)。"
+            "通常由图片参数自动推断，无需手动指定。",
             nullable=True,
         ),
         aspect_ratio=StringSchema(
@@ -92,6 +103,18 @@ class VideoGenerationToolConfig(Base):
         ),
         duration=StringSchema(
             "目标时长: 3s, 5s, 10s, 18s。自动设置 num_frames 和 frame_rate。",
+            nullable=True,
+        ),
+        num_frames=IntegerSchema(
+            description="直接指定帧数，覆盖 duration 预设。",
+            nullable=True,
+        ),
+        frame_rate=IntegerSchema(
+            description="直接指定帧率，覆盖 duration 预设。",
+            nullable=True,
+        ),
+        num_inference_steps=IntegerSchema(
+            description="推理步数，控制生成质量和速度的平衡。",
             nullable=True,
         ),
         negative_prompt=StringSchema(
@@ -161,9 +184,9 @@ class VideoGenerationTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "通过文本提示词或图片生成视频。支持文生视频、图生视频和关键帧动画。"
+            "通过文本提示词或图片生成视频。支持文生视频、图生视频、多图参考和关键帧动画。"
             "创建任务后在后台轮询，完成时自动推送视频文件给用户。"
-            "使用 image 参数的 artifact ID 引用之前上传/生成的图片。"
+            "使用 reference_images 参数的 artifact ID 引用之前上传/生成的图片。"
             "重要：不要仅因用户上传了图片就自动调用此工具。"
             "只有当用户明确要求生成或制作视频时才调用。"
             "如果用户只发了图片没有文字指令，先询问用户想做什么。"
@@ -211,24 +234,63 @@ class VideoGenerationTool(Tool):
         encoded = base64.b64encode(raw).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
-    def _resolve_duration(self, duration: str | None) -> tuple[int, int]:
-        if duration and duration in _DURATION_PRESETS:
-            return _DURATION_PRESETS[duration]
-        return (self.config.default_num_frames, self.config.default_frame_rate)
+    def _resolve_duration(
+        self,
+        duration: str | None,
+        num_frames_override: int | None = None,
+        frame_rate_override: int | None = None,
+    ) -> tuple[int, int]:
+        preset_frames, preset_rate = (
+            _DURATION_PRESETS[duration]
+            if duration and duration in _DURATION_PRESETS
+            else (self.config.default_num_frames, self.config.default_frame_rate)
+        )
+        final_frames = num_frames_override if num_frames_override is not None else preset_frames
+        final_rate = frame_rate_override if frame_rate_override is not None else preset_rate
+        return (final_frames, final_rate)
 
     def _resolve_size(self, aspect_ratio: str | None) -> tuple[int, int]:
-        if aspect_ratio and aspect_ratio in _ASPECT_RATIO_SIZES:
-            return _ASPECT_RATIO_SIZES[aspect_ratio]
+        ratio = aspect_ratio or self.config.default_aspect_ratio
+        if ratio in _ASPECT_RATIO_SIZES:
+            return _ASPECT_RATIO_SIZES[ratio]
         return (self.config.default_width, self.config.default_height)
+
+    @staticmethod
+    def _infer_mode(
+        reference_images: list[str] | None,
+        keyframe_images: list[str] | None,
+    ) -> tuple[str | None, str | list[str] | None]:
+        """Infer mode and image value from the image parameters.
+
+        Returns (mode, image_value) where image_value is:
+        - None for ti2vid
+        - str for single image (img2vid)
+        - list[str] for multi_reference or keyframes
+        """
+        refs = list(reference_images or [])
+        keyframes = list(keyframe_images or [])
+
+        if refs:
+            if len(refs) == 1:
+                return ("img2vid", refs[0])
+            return ("multi_reference", refs)
+
+        if keyframes:
+            return ("keyframes", keyframes)
+
+        return (None, None)
 
     async def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         prompt: str,
-        image: str | None = None,
+        reference_images: list[str] | None = None,
         keyframe_images: list[str] | None = None,
         mode: str | None = None,
         aspect_ratio: str | None = None,
         duration: str | None = None,
+        num_frames: int | None = None,
+        frame_rate: int | None = None,
+        num_inference_steps: int | None = None,
         negative_prompt: str | None = None,
         seed: int | None = None,
         **kwargs: Any,
@@ -239,32 +301,40 @@ class VideoGenerationTool(Tool):
                 f"Error: unsupported video generation provider '{self.config.provider}'"
             )
 
-        num_frames, frame_rate = self._resolve_duration(duration)
+        final_num_frames, final_frame_rate = self._resolve_duration(
+            duration, num_frames, frame_rate
+        )
         width, height = self._resolve_size(aspect_ratio)
 
-        image_url = None
-        if image:
-            image_url = self._resolve_artifact_id(image)
+        # Resolve artifact IDs / URLs for reference images and keyframe images
+        resolved_refs = (
+            [self._resolve_artifact_id(r) for r in reference_images]
+            if reference_images
+            else None
+        )
+        resolved_keyframes = (
+            [self._resolve_artifact_id(k) for k in keyframe_images]
+            if keyframe_images
+            else None
+        )
 
-        extra_body = None
-        if keyframe_images:
-            resolved_keyframes = [self._resolve_artifact_id(k) for k in keyframe_images]
-            extra_body = {"image": resolved_keyframes, "mode": "keyframes"}
-            mode = "keyframes"
+        # Mode auto-inference: image params override explicit mode
+        inferred_mode, image_value = self._infer_mode(resolved_refs, resolved_keyframes)
+        final_mode = inferred_mode  # always inferred, overrides explicit mode
 
         try:
             task = await client.create_task(
                 model=self.config.model,
                 prompt=prompt,
-                image=image_url,
-                mode=mode,
+                image=image_value,
+                mode=final_mode,
                 width=width,
                 height=height,
-                num_frames=num_frames,
-                frame_rate=frame_rate,
+                num_frames=final_num_frames,
+                frame_rate=final_frame_rate,
+                num_inference_steps=num_inference_steps,
                 seed=seed,
                 negative_prompt=negative_prompt,
-                extra_body=extra_body,
             )
         except VideoGenerationError as exc:
             return ToolResult.error(f"Error: {exc}")

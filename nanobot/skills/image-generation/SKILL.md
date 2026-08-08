@@ -31,6 +31,23 @@ If the `generate_image` tool is not available in the current tool list, tell the
   video or animation that requires them.
 - These rules override any implicit interpretation of user intent. When in doubt, ask.
 
+## Parameter Extraction from Natural Language
+
+When the user describes parameters in natural language, extract them:
+
+| User Says | Parameter |
+|---|---|
+| "16:9", "横版", "landscape", "宽屏" | `aspect_ratio="16:9"` |
+| "9:16", "竖版", "portrait", "手机壁纸" | `aspect_ratio="9:16"` |
+| "方形", "正方形", "square" | `aspect_ratio="1:1"` |
+| "4:3", "传统比例" | `aspect_ratio="4:3"` |
+| "4K", "超高清", "ultra HD" | `image_size="4K"` |
+| "2K", "高清", "HD" | `image_size="2K"` |
+| "1K", "标准", "standard" | `image_size="1K"` |
+| "1024x1024" (explicit dimensions) | `image_size="1024x1024"` |
+
+If the user does not specify any size parameters, use the tool defaults (`aspect_ratio` and `image_size` from config).
+
 ## Prompt Rules
 
 Write prompts with enough detail for image models:
@@ -58,13 +75,14 @@ Do not include internal replay markers such as `[Message Time: ...]`, `[image: /
 
 ## Examples
 
-Generate a new image:
+Generate a new image with parameters from natural language:
 
 ```text
+// User: "生成一张 16:9 的横版壁纸，4K 高清"
 generate_image(
   prompt="A minimal app icon for nanobot: friendly robot head, rounded square, soft blue and white palette, clean vector style, no text",
-  aspect_ratio="1:1",
-  image_size="1K"
+  aspect_ratio="16:9",
+  image_size="4K"
 )
 ```
 

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -12,7 +10,6 @@ import pytest
 from nanobot.providers.video_generation import (
     AgnesVideoGenerationClient,
     VideoGenerationError,
-    VideoTaskResponse,
     _normalize_status,
     get_video_gen_provider,
 )
@@ -505,4 +502,103 @@ async def test_get_task_status_429_quota_no_retry() -> None:
     with pytest.raises(VideoGenerationError, match="quota exceeded"):
         await client.get_task_status("vid_quota")
     assert call_count == 1
+    await client._client.aclose()
+
+
+# -- Multi-image and extra_body tests ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_task_with_multiple_images() -> None:
+    """Multi-reference: image field accepts a list and body reflects it."""
+    captured_body: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        import json
+        captured_body.update(json.loads(req.content.decode()))
+        return _mock_response(200, {
+            "video_id": "video_multi",
+            "task_id": "task_multi",
+            "status": "queued",
+            "progress": 0,
+        })
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await client.create_task(
+        model="agnes-video-v2.0",
+        prompt="Showcase video from multiple angles",
+        image=["https://example.com/a.jpg", "https://example.com/b.jpg"],
+        mode="multi_reference",
+    )
+
+    assert isinstance(captured_body["image"], list)
+    assert captured_body["image"] == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+    assert captured_body["mode"] == "multi_reference"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_extra_body_merged_to_top_level() -> None:
+    """extra_body contents should appear at body top level, not nested."""
+    captured_body: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        import json
+        captured_body.update(json.loads(req.content.decode()))
+        return _mock_response(200, {
+            "video_id": "video_eb",
+            "task_id": "task_eb",
+            "status": "queued",
+            "progress": 0,
+        })
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await client.create_task(
+        model="agnes-video-v2.0",
+        prompt="test",
+        extra_body={"image": ["https://example.com/k1.jpg", "https://example.com/k2.jpg"], "mode": "keyframes"},
+    )
+
+    # extra_body fields must be at top level, NOT nested under "extra_body"
+    assert "extra_body" not in captured_body
+    assert captured_body["image"] == ["https://example.com/k1.jpg", "https://example.com/k2.jpg"]
+    assert captured_body["mode"] == "keyframes"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_with_num_inference_steps() -> None:
+    """num_inference_steps is passed through to the request body."""
+    captured_body: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        import json
+        captured_body.update(json.loads(req.content.decode()))
+        return _mock_response(200, {
+            "video_id": "video_steps",
+            "task_id": "task_steps",
+            "status": "queued",
+            "progress": 0,
+        })
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    await client.create_task(
+        model="agnes-video-v2.0",
+        prompt="test",
+        num_inference_steps=50,
+    )
+
+    assert captured_body["num_inference_steps"] == 50
     await client._client.aclose()

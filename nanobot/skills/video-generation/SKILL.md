@@ -1,6 +1,6 @@
 ---
 name: video-generation
-description: Generate videos through text-to-video, image-to-video, and keyframe animation.
+description: Generate videos through text-to-video, image-to-video, multi-reference, and keyframe animation.
 ---
 
 # Video Generation
@@ -12,8 +12,9 @@ If the `generate_video` tool is not available in the current tool list, tell the
 ## When To Use
 
 - **Text-to-video**: call `generate_video` with a `prompt` describing the scene. Add `duration` ("3s", "5s", "10s", "18s") for length.
-- **Image-to-video**: pass an artifact ID in the `image` parameter to animate a static image.
-- **Keyframe animation**: pass multiple artifact IDs in `keyframe_images` to create animated transitions between images.
+- **Image-to-video**: pass a single artifact ID in `reference_images` to animate a static image.
+- **Multi-reference**: pass 2-4 artifact IDs in `reference_images` to use multiple images as style/content references (no time order).
+- **Keyframe animation**: pass exactly 2 artifact IDs in `keyframe_images` (first frame + last frame) to generate a transition between them.
 - After generating, the tool runs in background and auto-delivers the video when done.
 
 ## When NOT To Use
@@ -28,9 +29,10 @@ If the `generate_video` tool is not available in the current tool list, tell the
 ```
 User wants media?
 ├── Mentions "video"/"视频"/"动画"/duration → generate_video ✅
-│   ├── Has reference image? → use `image` param with artifact ID
-│   ├── Multiple frames? → use `keyframe_images` param
-│   └── Text only? → use `prompt` only
+│   ├── Single image reference? → use `reference_images` with 1 item (img2vid)
+│   ├── 2-4 images as references? → use `reference_images` with 2-4 items (multi_reference)
+│   ├── First + last frame transition? → use `keyframe_images` with 2 items (keyframes)
+│   └── Text only? → use `prompt` only (ti2vid)
 │
 └── Wants static image → generate_image ✅
     └── Use image-generation skill guidance
@@ -41,11 +43,42 @@ User wants media?
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `prompt` | string (required) | Scene description in detail |
-| `image` | string (optional) | Artifact ID of reference image for img2vid |
-| `keyframe_images` | list[string] (optional) | Artifact IDs for keyframe animation mode |
+| `reference_images` | list[string] (optional) | 1-4 artifact IDs for image-to-video or multi-reference mode |
+| `keyframe_images` | list[string] (optional) | Exactly 2 artifact IDs (first frame + last frame) for keyframe animation |
 | `duration` | string (optional) | "3s", "5s", "10s", "18s" (default: 5s) |
-| `aspect_ratio` | string (optional) | "16:9", "9:16", "1:1", "4:3", "3:4" |
+| `aspect_ratio` | string (optional) | "16:9", "9:16", "1:1", "4:3", "3:4" (default: 16:9) |
+| `num_frames` | int (optional) | Direct frame count, overrides duration preset |
+| `frame_rate` | int (optional) | Direct frame rate, overrides duration preset |
+| `num_inference_steps` | int (optional) | Inference steps for quality/speed balance |
 | `negative_prompt` | string (optional) | What to avoid in the video |
+| `seed` | int (optional) | Random seed for reproducible results |
+
+### Mode Auto-Inference
+
+The `mode` parameter is automatically inferred from the image parameters — you do NOT need to set it manually:
+
+| Image Parameter | Count | Auto Mode |
+|---|---|---|
+| none | — | `ti2vid` |
+| `reference_images` | 1 | `img2vid` |
+| `reference_images` | 2-4 | `multi_reference` |
+| `keyframe_images` | 2 | `keyframes` |
+
+If both `reference_images` and `keyframe_images` are passed, `reference_images` takes priority.
+
+### Parameter Extraction from Natural Language
+
+When the user describes parameters in natural language, extract them:
+
+| User Says | Parameter |
+|---|---|
+| "5秒", "5 seconds" | `duration="5s"` |
+| "16:9", "横版", "landscape" | `aspect_ratio="16:9"` |
+| "9:16", "竖版", "portrait", "短视频" | `aspect_ratio="9:16"` |
+| "方形" | `aspect_ratio="1:1"` |
+| "根据 1001 和 1002" | `reference_images=["1001", "1002"]` |
+| "用 1001 和 1002 做首尾帧" | `keyframe_images=["1001", "1002"]` |
+| "用图 1001" | `reference_images=["1001"]` |
 
 ## Prompt Writing Tips
 
@@ -80,18 +113,29 @@ Animate an existing image into 3-second video:
 ```text
 generate_video(
   prompt="Make this image come alive: water ripples, leaves sway gently",
-  image="1002",
+  reference_images=["1002"],
   duration="3s"
 )
 ```
 
-Create keyframe animation from multiple images:
+Generate video from two reference images:
 
 ```text
 generate_video(
-  prompt="Smooth transition between these keyframes, cinematic fade",
-  keyframe_images=["1010", "1011", "1012", "1013", "1014"],
-  duration="10s"
+  prompt="Create a showcase video combining elements from both images, cinematic style",
+  reference_images=["1001", "1002"],
+  duration="5s",
+  aspect_ratio="16:9"
+)
+```
+
+Create keyframe animation from first and last frame:
+
+```text
+generate_video(
+  prompt="Smooth cinematic transition between these two frames",
+  keyframe_images=["1010", "1011"],
+  duration="3s"
 )
 ```
 

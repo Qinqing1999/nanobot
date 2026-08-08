@@ -47,3 +47,21 @@ _Avoid_: ID 查找、文件定位
 **会话切换 (Session Switching)**:
 用户通过 `/sessions` 和 `/switch` 命令在同一 channel 内查看、新建和切换不同会话的能力。通过 `session_key_override` 实现。
 _Avoid_: 多租户、频道切换
+
+## 视频生成模式
+
+**生成模式 (Generation Mode)**:
+视频生成时图片输入的使用方式，由 `mode` 字段标识。四种模式：`ti2vid`（纯文生视频，无图片）、`img2vid`（单图生视频）、`multi_reference`（多图参考，2-4 张图片作为风格/内容参考，无时间顺序）、`keyframes`（关键帧插值，恰好 2 张图片定义首帧和尾帧，生成过渡动画）。`mode` 可由图片参数自动推断，无需用户显式指定。
+_Avoid_: 渲染模式、输出类型
+
+**参考图 (Reference Image)**:
+视频生成时作为风格或内容参考的图片，无时间顺序语义。通过 `reference_images` 参数传入（artifact ID 数组）。1 张时为单图生视频，2-4 张时为多图参考。与关键帧互斥。
+_Avoid_: 源图、输入图
+
+**关键帧 (Keyframe)**:
+视频生成时定义时间端点的图片，恰好 2 张：首帧（起点）和尾帧（终点）。通过 `keyframe_images` 参数传入。API 在两帧之间生成过渡动画。与参考图互斥。
+_Avoid_: 参考帧、定格帧
+
+**参考图优先 (Reference Priority)**:
+当 `reference_images` 和 `keyframe_images` 同时传入时，`reference_images` 优先，忽略 `keyframe_images`。`mode` 参数始终由图片参数自动推断，显式传入的 `mode` 被覆盖。
+_Avoid_: 合并模式、混合模式

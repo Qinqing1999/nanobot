@@ -194,7 +194,7 @@ class VideoGenerationProvider:
         *,
         model: str,
         prompt: str,
-        image: str | None = None,
+        image: str | list[str] | None = None,
         mode: str | None = None,
         width: int | None = None,
         height: int | None = None,
@@ -233,7 +233,7 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
         *,
         model: str,
         prompt: str,
-        image: str | None = None,
+        image: str | list[str] | None = None,
         mode: str | None = None,
         width: int | None = None,
         height: int | None = None,
@@ -273,7 +273,7 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
         if negative_prompt:
             body["negative_prompt"] = negative_prompt
         if extra_body:
-            body["extra_body"] = extra_body
+            body.update(extra_body)
         body.update(self.extra_body)
 
         url = f"{self.api_base}/v1/videos"
