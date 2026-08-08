@@ -4,8 +4,9 @@ description: Generate images and iteratively edit saved image artifacts.
 ---
 
 # Image Generation
+Use the `generate_image` tool when the user asks you to create, render, draw, design, generate, or edit an **image** (static picture).
 
-Use the `generate_image` tool when the user asks you to create, render, draw, design, generate, or edit an image.
+**IMPORTANT**: If the user wants a **video**, **animation**, or **motion clip** (mentions "视频", "动画", duration like 3s/5s), use `generate_video` instead. See video-generation skill for details.
 
 If the `generate_image` tool is not available in the current tool list, tell the user that image generation is not enabled for this nanobot instance.
 
