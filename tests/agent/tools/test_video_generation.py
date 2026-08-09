@@ -394,3 +394,55 @@ async def test_quota_exhaustion_pushes_outbound_and_returns_error() -> None:
     bus.publish_outbound.assert_called_once()
     outbound = bus.publish_outbound.call_args
     assert "视频创建失败" in str(outbound) or "quota" in str(outbound).lower()
+
+
+# ---------------------------------------------------------------------------
+# _infer_mode tests
+# ---------------------------------------------------------------------------
+
+class TestInferMode:
+    """Tests for VideoGenerationTool._infer_mode static method."""
+
+    def test_no_images_returns_none_none(self):
+        """No images → text-to-video (mode=None, image=None)."""
+        mode, image = VideoGenerationTool._infer_mode(None, None)
+        assert mode is None
+        assert image is None
+
+    def test_no_images_empty_lists_returns_none_none(self):
+        """Empty lists → text-to-video."""
+        mode, image = VideoGenerationTool._infer_mode([], [])
+        assert mode is None
+        assert image is None
+
+    def test_single_reference_image_returns_none_mode(self):
+        """Single reference image → mode omitted (None), image as str."""
+        mode, image = VideoGenerationTool._infer_mode(["img1.png"], None)
+        assert mode is None
+        assert image == "img1.png"
+
+    def test_multiple_reference_images_returns_keyframes(self):
+        """Multiple reference images → keyframes mode, image as list."""
+        mode, image = VideoGenerationTool._infer_mode(["img1.png", "img2.png"], None)
+        assert mode == "keyframes"
+        assert image == ["img1.png", "img2.png"]
+
+    def test_keyframe_images_returns_keyframes(self):
+        """Keyframe images → keyframes mode, image as list."""
+        mode, image = VideoGenerationTool._infer_mode(None, ["kf1.png", "kf2.png"])
+        assert mode == "keyframes"
+        assert image == ["kf1.png", "kf2.png"]
+
+    def test_reference_images_take_priority_over_keyframes(self):
+        """When both are provided, reference_images takes priority."""
+        mode, image = VideoGenerationTool._infer_mode(["ref.png"], ["kf1.png", "kf2.png"])
+        assert mode is None
+        assert image == "ref.png"
+
+    def test_three_reference_images_returns_keyframes(self):
+        """3 reference images → keyframes mode."""
+        mode, image = VideoGenerationTool._infer_mode(
+            ["img1.png", "img2.png", "img3.png"], None
+        )
+        assert mode == "keyframes"
+        assert image == ["img1.png", "img2.png", "img3.png"]

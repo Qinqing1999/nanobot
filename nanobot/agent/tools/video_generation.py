@@ -106,8 +106,8 @@ class VideoGenerationToolConfig(Base):
         reference_images=ArraySchema(
             StringSchema("参考图片 artifact ID 或 URL"),
             description=(
-                "参考图片，支持 1-4 张。1 张为图生视频 (img2vid)，"
-                "2-4 张为多图参考 (multi_reference)。"
+                "参考图片，支持 1-4 张。1 张为单图生视频，"
+                "2-4 张为关键帧动画 (keyframes) 模式。"
                 "使用 artifact ID 引用之前上传/生成的图片。"
             ),
             nullable=True,
@@ -121,9 +121,8 @@ class VideoGenerationToolConfig(Base):
             nullable=True,
         ),
         mode=StringSchema(
-            "生成模式: ti2vid (文生视频), img2vid (单图生视频), "
-            "multi_reference (多图参考), keyframes (关键帧动画)。"
-            "通常由图片参数自动推断，无需手动指定。",
+            "生成模式，由图片参数自动推断，无需手动指定。"
+            "无图时为文生视频，单图为图生视频，多图为关键帧动画。",
             nullable=True,
         ),
         aspect_ratio=StringSchema(
@@ -292,17 +291,24 @@ class VideoGenerationTool(Tool):
         """Infer mode and image value from the image parameters.
 
         Returns (mode, image_value) where image_value is:
-        - None for ti2vid
-        - str for single image (img2vid)
-        - list[str] for multi_reference or keyframes
+        - None for text-to-video
+        - str for single image (mode omitted — API auto-detects)
+        - list[str] for keyframes (mode="keyframes")
+
+        The Agnes API only supports:
+        * text-to-video:  mode omitted, no image
+        * single image:   mode omitted, image as str
+        * keyframes:      mode="keyframes", image as list[str]
         """
         refs = list(reference_images or [])
         keyframes = list(keyframe_images or [])
 
         if refs:
             if len(refs) == 1:
-                return ("img2vid", refs[0])
-            return ("multi_reference", refs)
+                # Single image — omit mode, pass image as string
+                return (None, refs[0])
+            # Multiple reference images — only keyframes mode is supported
+            return ("keyframes", refs)
 
         if keyframes:
             return ("keyframes", keyframes)

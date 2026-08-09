@@ -52,6 +52,13 @@ _VIDEO_POLL_MAX_DURATION_S = 300.0  # 5 分钟超时
 _VIDEO_429_RETRY_MAX = 3            # 1 initial + 2 retries
 _VIDEO_429_BACKOFF_BASE = 2.0      # seconds: 2, 4, 8
 
+# 503 response body markers indicating a temporary server-side queue full
+_RETRYABLE_503_MARKERS = (
+    "video_queue_full",
+    "queue is full",
+    "service unavailable",
+)
+
 # 429 classification — mirrors LLMProvider._NON_RETRYABLE_429_TEXT_MARKERS
 _NON_RETRYABLE_429_MARKERS = (
     "insufficient_quota",
@@ -177,6 +184,14 @@ class VideoGenerationProvider:
             return False
         text = response.text.lower()
         return not any(marker in text for marker in _NON_RETRYABLE_429_MARKERS)
+
+    @staticmethod
+    def _is_retryable_503(response: httpx.Response) -> bool:
+        """Determine if a 503 is retryable (queue full) vs persistent outage."""
+        if response.status_code != 503:
+            return False
+        text = response.text.lower()
+        return any(marker in text for marker in _RETRYABLE_503_MARKERS)
 
     @staticmethod
     def _extract_retry_after(response: httpx.Response) -> float:
@@ -309,6 +324,20 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
                         f"Agnes video API quota exceeded: {response.text[:500]}",
                         kind="quota_exhausted",
                     )
+                if response.status_code == 503 and self._is_retryable_503(response):
+                    if attempt < _VIDEO_429_RETRY_MAX - 1:
+                        delay = _VIDEO_429_BACKOFF_BASE * (2 ** attempt)
+                        logger.warning(
+                            "Agnes video create got 503 queue full "
+                            "(attempt {}/{}), retrying in {:.1f}s",
+                            attempt + 1, _VIDEO_429_RETRY_MAX, delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise VideoGenerationError(
+                        f"Agnes video API queue full: {response.text[:500]}",
+                        kind="rate_limit",
+                    )
                 response.raise_for_status()
                 data = response.json()
                 return VideoTaskResponse(
@@ -319,6 +348,12 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
                     seconds=str(data.get("seconds", "")) if data.get("seconds") else None,
                     size=data.get("size"),
                     created_at=data.get("created_at"),
+                )
+            except httpx.HTTPStatusError as exc:
+                raise VideoGenerationError(
+                    f"Agnes video API returned HTTP {exc.response.status_code}: "
+                    f"{exc.response.text[:500]}",
+                    kind="unknown",
                 )
             except httpx.TimeoutException:
                 raise VideoGenerationError(
@@ -421,6 +456,11 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
                     created_at=data.get("created_at"),
                     video_url=video_url,
                     error=error_msg,
+                )
+            except httpx.HTTPStatusError as exc:
+                raise VideoGenerationError(
+                    f"Agnes video status query returned HTTP {exc.response.status_code}: "
+                    f"{exc.response.text[:500]}"
                 )
             except httpx.TimeoutException:
                 raise VideoGenerationError("Agnes video status query timed out")

@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from nanobot.providers.video_generation import (
+    _VIDEO_429_RETRY_MAX,
     AgnesVideoGenerationClient,
     VideoGenerationError,
     _normalize_status,
@@ -664,4 +665,83 @@ async def test_create_task_timeout_kind_is_unknown() -> None:
     with pytest.raises(VideoGenerationError) as exc_info:
         await client.create_task(model="agnes-video-v2.0", prompt="test")
     assert exc_info.value.kind == "unknown"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_400_wrapped_as_unknown() -> None:
+    """400 Bad Request should be wrapped in VideoGenerationError(kind='unknown'), not leak httpx.HTTPStatusError."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"message": "Invalid image format"}},
+            request=req,
+        )
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        await client.create_task(model="agnes-video-v2.0", prompt="test")
+    assert exc_info.value.kind == "unknown"
+    assert "400" in str(exc_info.value)
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_503_queue_full_retries_then_rate_limit() -> None:
+    """503 video_queue_full should be retried, then raise with kind='rate_limit'."""
+    call_count = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            503,
+            json={"code": "video_queue_full", "message": "video queue is full, please retry later"},
+            request=req,
+        )
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        await client.create_task(model="agnes-video-v2.0", prompt="test")
+    assert exc_info.value.kind == "rate_limit"
+    assert call_count == _VIDEO_429_RETRY_MAX
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_503_queue_full_recovers_on_retry() -> None:
+    """503 on first attempt, 200 on second — should succeed."""
+    call_count = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(
+                503,
+                json={"code": "video_queue_full", "message": "video queue is full"},
+                request=req,
+            )
+        return httpx.Response(
+            200,
+            json={"video_id": "vid_123", "task_id": "tid_123", "status": "queued", "progress": 0},
+            request=req,
+        )
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    result = await client.create_task(model="agnes-video-v2.0", prompt="test")
+    assert result.video_id == "vid_123"
+    assert call_count == 2
     await client._client.aclose()
