@@ -11,9 +11,11 @@ import pytest
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.video_generation import (
+    CheckVideoTool,
     VideoGenerationTool,
     VideoGenerationToolConfig,
     _clear_pending_video_tasks,
+    _delivered_video_ids,
 )
 from nanobot.providers.video_generation import (
     VideoGenerationProvider,
@@ -573,3 +575,179 @@ class TestResolveArtifactId:
         assert not result.startswith("data:")
         assert result != str(img_path)
         assert base64.b64decode(result) == raw
+
+
+# ---------------------------------------------------------------------------
+# Delivery dedup tests — shared _delivered_video_ids between tools
+# ---------------------------------------------------------------------------
+
+
+def _completed_status() -> VideoTaskResponse:
+    """A completed video status with a download URL."""
+    return VideoTaskResponse(
+        video_id="vid_done",
+        task_id="task_done",
+        status="completed",
+        progress=100,
+        seconds="3.4",
+        size="1088x832",
+        created_at=None,
+        video_url="https://cdn.example.com/video.mp4",
+    )
+
+
+def _make_check_tool(
+    *,
+       provider: VideoGenerationProvider,
+       bus: MagicMock | None = None,
+) -> CheckVideoTool:
+    """Create a CheckVideoTool with a fake provider."""
+    config = VideoGenerationToolConfig(enabled=True, provider="fake")
+    tool = CheckVideoTool(
+        config=config,
+        provider_configs={},
+        bus=bus or MagicMock(),
+        sessions=None,
+    )
+    tool._provider_client = lambda: provider  # type: ignore[method-assign]
+    return tool
+
+
+@pytest.mark.asyncio
+async def test_check_video_skips_delivery_when_already_delivered() -> None:
+    """CheckVideoTool should NOT re-deliver a video that the background
+    polling already pushed to the user."""
+    provider = FakeVideoProvider(status_response=_completed_status())
+    bus = MagicMock()
+    bus.publish_outbound = AsyncMock()
+
+    # Simulate: background polling already delivered this video
+    _delivered_video_ids.add("vid_done")
+
+    tool = _make_check_tool(provider=provider, bus=bus)
+    ctx = _request_context()
+
+    with request_context(ctx):
+        result = await tool.execute(video_id="vid_done")
+
+    # Should report status but NOT push another "视频生成完成" message
+    assert "completed" in result
+    assert "已下载并推送" not in result
+    # No outbound messages should have been published
+    bus.publish_outbound.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_poll_skips_delivery_when_already_delivered(monkeypatch) -> None:
+    """VideoGenerationTool._poll_and_deliver should NOT re-deliver a video
+    that CheckVideoTool already pushed to the user."""
+    # Speed up polling
+    monkeypatch.setattr(
+        "nanobot.agent.tools.video_generation._VIDEO_POLL_INTERVAL_S", 0.01
+    )
+
+    provider = FakeVideoProvider(status_response=_completed_status())
+    bus = MagicMock()
+    bus.publish_outbound = AsyncMock()
+
+    config = VideoGenerationToolConfig(enabled=True, provider="fake")
+    tool = VideoGenerationTool(
+        workspace="/tmp",
+        config=config,
+        provider_configs={},
+        bus=bus,
+        sessions=None,
+        schedule_background=lambda coro: coro.close(),
+    )
+    tool._provider_client = lambda: provider  # type: ignore[method-assign]
+
+    # Simulate: CheckVideoTool already delivered this video
+    _delivered_video_ids.add("vid_done")
+
+    await tool._poll_and_deliver(
+        video_id="vid_done",
+        client=provider,
+        prompt="test",
+        channel="websocket",
+        chat_id="c1",
+        session_key="websocket:c1",
+    )
+
+    # No completion message should have been published — the polling
+    # should have skipped delivery after seeing the video already delivered.
+    # (A progress notification may still be sent, which is fine.)
+    outbound_calls = bus.publish_outbound.call_args_list
+    completion_msgs = [c for c in outbound_calls if "视频生成完成" in str(c)]
+    assert len(completion_msgs) == 0, "Should not deliver if already delivered"
+
+
+@pytest.mark.asyncio
+async def test_delivery_dedup_across_both_paths(monkeypatch) -> None:
+    """Integration test: background polling delivers first, then check_video
+    is called — only ONE '视频生成完成' message should be pushed."""
+    # Speed up polling
+    monkeypatch.setattr(
+        "nanobot.agent.tools.video_generation._VIDEO_POLL_INTERVAL_S", 0.01
+    )
+
+    # Mock download and storage to avoid real file I/O
+    monkeypatch.setattr(
+        VideoGenerationTool, "_download_video",
+        staticmethod(lambda url: _async_return(b"fake_video_bytes")),
+    )
+    fake_artifact = {"path": "/tmp/fake.mp4", "mime": "video/mp4"}
+    monkeypatch.setattr(
+        "nanobot.agent.tools.video_generation.store_generated_video_artifact",
+        lambda *args, **kwargs: fake_artifact,
+    )
+
+    provider = FakeVideoProvider(status_response=_completed_status())
+    bus = MagicMock()
+    bus.publish_outbound = AsyncMock()
+
+    # --- Step 1: background polling delivers the video ---
+    config = VideoGenerationToolConfig(enabled=True, provider="fake")
+    gen_tool = VideoGenerationTool(
+        workspace="/tmp",
+        config=config,
+        provider_configs={},
+        bus=bus,
+        sessions=None,
+        schedule_background=lambda coro: coro.close(),
+    )
+    gen_tool._provider_client = lambda: provider  # type: ignore[method-assign]
+
+    await gen_tool._poll_and_deliver(
+        video_id="vid_done",
+        client=provider,
+        prompt="test",
+        channel="websocket",
+        chat_id="c1",
+        session_key="websocket:c1",
+    )
+
+    # Should have pushed exactly: 1× progress (100%) + 1× completion = 2
+    outbound_calls = bus.publish_outbound.call_args_list
+    completion_msgs = [c for c in outbound_calls if "视频生成完成" in str(c)]
+    assert len(completion_msgs) == 1, "Background polling should deliver once"
+
+    # --- Step 2: LLM calls check_video with the same video_id ---
+    check_tool = _make_check_tool(provider=provider, bus=bus)
+    ctx = _request_context()
+
+    with request_context(ctx):
+        result = await check_tool.execute(video_id="vid_done")
+
+    # Should report status but NOT push another completion message
+    assert "completed" in result
+    assert "已下载并推送" not in result
+
+    # Total completion messages should still be 1
+    outbound_calls = bus.publish_outbound.call_args_list
+    completion_msgs = [c for c in outbound_calls if "视频生成完成" in str(c)]
+    assert len(completion_msgs) == 1, "check_video should NOT deliver again"
+
+
+async def _async_return(value: Any) -> Any:
+    """Helper: return a value from an async context."""
+    return value

@@ -59,10 +59,17 @@ class _PendingTask:
 # Process-lifetime only (restart = lost), consistent with ADR-0002.
 _pending_video_tasks: dict[str, _PendingTask] = {}
 
+# Module-level set: video_ids that have already been delivered to the user.
+# Shared between VideoGenerationTool._poll_and_deliver (background polling)
+# and CheckVideoTool._deliver_completed_video (fallback delivery) to prevent
+# the same completed video from being downloaded, stored, and pushed twice.
+_delivered_video_ids: set[str] = set()
+
 
 def _clear_pending_video_tasks() -> None:
     """Clear all pending video task entries. For testing only."""
     _pending_video_tasks.clear()
+    _delivered_video_ids.clear()
 
 
 # Duration presets: (num_frames, frame_rate)
@@ -104,11 +111,11 @@ class VideoGenerationToolConfig(Base):
             min_length=1,
         ),
         reference_images=ArraySchema(
-            StringSchema("参考图片 artifact ID 或 URL"),
+            StringSchema("参考图片的制品 ID（四位数字，如 1021）或图片 URL"),
             description=(
-                "参考图片，支持 1-4 张。1 张为单图生视频，"
-                "2-4 张为关键帧动画 (keyframes) 模式。"
-                "使用 artifact ID 引用之前上传/生成的图片。"
+                "参考图片，支持 1-4 张。1 张为单图生视频，2-4 张为多图参考模式。\n"
+                "传入之前 generate_image 返回的 artifact_id（四位数字，如 \"1021\"）。\n"
+                "当用户要求用图片生成视频时，此参数为必填——不传则只会生成纯文字视频。"
             ),
             nullable=True,
         ),
@@ -213,8 +220,9 @@ class VideoGenerationTool(Tool):
     def description(self) -> str:
         return (
             "通过文本提示词或图片生成视频。支持文生视频、图生视频、多图参考和关键帧动画。"
-            "创建任务后在后台轮询，完成时自动推送视频文件给用户。"
-            "使用 reference_images 参数的 artifact ID 引用之前上传/生成的图片。"
+            "创建任务后在后台轮询，完成时自动推送视频文件给用户。\n"
+            "图生视频：当用户要求用图片/照片生成视频时，必须把图片的制品 ID（四位数字，如 1021）"
+            "传入 reference_images 参数。制品 ID 来自之前 generate_image 的返回结果或会话上下文。\n"
             "重要：不要仅因用户上传了图片就自动调用此工具。"
             "只有当用户明确要求生成或制作视频时才调用。"
             "如果用户只发了图片没有文字指令，先询问用户想做什么。"
@@ -751,6 +759,13 @@ class VideoGenerationTool(Tool):
                         ))
 
                 if status.status == "completed" and status.video_url:
+                    # Delivery dedup: if CheckVideoTool already delivered this
+                    # video (fallback path), skip duplicate download/push.
+                    if video_id in _delivered_video_ids:
+                        logger.info("Video {} already delivered, skipping", video_id)
+                        return
+                    _delivered_video_ids.add(video_id)
+
                     # Download, store, register, and push — each step in its
                     # own try/except so a failure still notifies the user
                     # instead of silently killing the background task.
@@ -758,6 +773,7 @@ class VideoGenerationTool(Tool):
                         video_bytes = await self._download_video(status.video_url)
                     except Exception as exc:
                         logger.error("Video download failed for {}: {}", video_id, exc)
+                        _delivered_video_ids.discard(video_id)
                         if self.bus:
                             await self.bus.publish_outbound(OutboundMessage(
                                 channel=channel,
@@ -779,6 +795,7 @@ class VideoGenerationTool(Tool):
                         )
                     except Exception as exc:
                         logger.error("Video artifact storage failed for {}: {}", video_id, exc)
+                        _delivered_video_ids.discard(video_id)
                         if self.bus:
                             await self.bus.publish_outbound(OutboundMessage(
                                 channel=channel,
@@ -901,7 +918,6 @@ class CheckVideoTool(Tool):
         self.provider_configs = dict(provider_configs or {})
         self.bus = bus
         self.sessions = sessions
-        self._delivered: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -948,12 +964,14 @@ class CheckVideoTool(Tool):
             # Fallback delivery: if the video is completed and hasn't been
             # delivered yet, download and push it here.  This covers the case
             # where the background polling task failed or was rate-limited.
+            # Uses the module-level _delivered_video_ids set shared with
+            # VideoGenerationTool._poll_and_deliver to prevent duplicates.
             if (
                 status.status == "completed"
                 and status.video_url
-                and video_id not in self._delivered
+                and video_id not in _delivered_video_ids
             ):
-                self._delivered.add(video_id)
+                _delivered_video_ids.add(video_id)
                 await self._deliver_completed_video(
                     video_id=video_id,
                     video_url=status.video_url,
@@ -1002,6 +1020,7 @@ class CheckVideoTool(Tool):
             video_bytes = await VideoGenerationTool._download_video(video_url)
         except Exception as exc:
             logger.error("Fallback video download failed for {}: {}", video_id, exc)
+            _delivered_video_ids.discard(video_id)
             if self.bus:
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=req_ctx.channel,

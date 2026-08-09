@@ -12,7 +12,7 @@ If the `generate_video` tool is not available in the current tool list, tell the
 ## When To Use
 
 - **Text-to-video**: call `generate_video` with a `prompt` describing the scene. Add `duration` ("3s", "5s", "10s", "18s") for length.
-- **Image-to-video**: pass a single artifact ID in `reference_images` to animate a static image.
+- **Image-to-video**: pass a single artifact ID in `reference_images` to animate a static image. **When the user says "用图片生成视频" / "用这个图做视频" / "animate this image", you MUST pass the image's artifact ID (four-digit number, e.g. `"1021"`) in `reference_images`.** The artifact ID comes from the `generate_image` tool result or the session's registered artifacts.
 - **Multi-reference**: pass 2-4 artifact IDs in `reference_images` to use multiple images as style/content references (no time order).
 - **Keyframe animation**: pass exactly 2 artifact IDs in `keyframe_images` (first frame + last frame) to generate a transition between them.
 - After generating, the tool runs in background and auto-delivers the video when done.
@@ -29,10 +29,10 @@ If the `generate_video` tool is not available in the current tool list, tell the
 ```
 User wants media?
 ├── Mentions "video"/"视频"/"动画"/duration → generate_video ✅
-│   ├── Single image reference? → use `reference_images` with 1 item (img2vid)
-│   ├── 2-4 images as references? → use `reference_images` with 2-4 items (multi_reference)
-│   ├── First + last frame transition? → use `keyframe_images` with 2 items (keyframes)
-│   └── Text only? → use `prompt` only (ti2vid)
+│   ├── Has a previous image? User says "用图片生成视频"? → MUST use `reference_images` with artifact ID (e.g. ["1021"])
+│   ├── 2-4 images as references? → use `reference_images` with 2-4 items
+│   ├── First + last frame transition? → use `keyframe_images` with 2 items
+│   └── Text only, no image? → use `prompt` only
 │
 └── Wants static image → generate_image ✅
     └── Use image-generation skill guidance
