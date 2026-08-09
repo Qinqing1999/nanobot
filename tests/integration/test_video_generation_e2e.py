@@ -173,7 +173,12 @@ async def test_e2e_text_to_video_request_body(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_e2e_img2vid_single_reference(tmp_path: Path) -> None:
-    """Single reference image: mode=img2vid, image is a string."""
+    """Single reference image: mode omitted (not in body), image is a string.
+
+    The API only accepts ti2vid/keyframes/multi_reference as mode.
+    For single image-to-video, mode is omitted so the API auto-detects
+    from the presence of the ``image`` field.
+    """
     captured: dict[str, Any] = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -193,7 +198,7 @@ async def test_e2e_img2vid_single_reference(tmp_path: Path) -> None:
     )
     await mock_client.aclose()
 
-    assert captured["mode"] == "img2vid"
+    assert "mode" not in captured
     assert captured["image"] == "https://example.com/photo.jpg"
     assert captured["num_inference_steps"] == 30
 

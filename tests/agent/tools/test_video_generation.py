@@ -415,10 +415,15 @@ class TestInferMode:
         assert mode is None
         assert image is None
 
-    def test_single_reference_image_returns_img2vid(self):
-        """Single reference image → mode=img2vid, image as str."""
+    def test_single_reference_image_returns_none_mode(self):
+        """Single reference image → mode omitted (None), image as str.
+
+        The API only accepts ti2vid, keyframes, multi_reference as mode.
+        For single image-to-video, mode must be omitted so the API
+        auto-detects from the ``image`` field.
+        """
         mode, image = VideoGenerationTool._infer_mode(["img1.png"], None)
-        assert mode == "img2vid"
+        assert mode is None
         assert image == "img1.png"
 
     def test_multiple_reference_images_returns_multi_reference(self):
@@ -436,7 +441,7 @@ class TestInferMode:
     def test_reference_images_take_priority_over_keyframes(self):
         """When both are provided, reference_images takes priority."""
         mode, image = VideoGenerationTool._infer_mode(["ref.png"], ["kf1.png", "kf2.png"])
-        assert mode == "img2vid"
+        assert mode is None
         assert image == "ref.png"
 
     def test_three_reference_images_returns_multi_reference(self):

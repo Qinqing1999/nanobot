@@ -122,15 +122,19 @@ async def test_no_images_infers_ti2vid(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_single_reference_image_infers_img2vid(tmp_path: Path) -> None:
-    """One reference image → mode=img2vid, image is a single string."""
+async def test_single_reference_image_omits_mode(tmp_path: Path) -> None:
+    """One reference image → mode omitted (None), image is a single string.
+
+    The API only accepts ti2vid/keyframes/multi_reference as mode.
+    For single image-to-video, mode is omitted so the API auto-detects.
+    """
     tool = _make_tool(tmp_path)
     await tool.execute(
         prompt="animate this",
         reference_images=["https://example.com/img.jpg"],
     )
     call = FakeVideoClient.instances[0].calls[0]
-    assert call["mode"] == "img2vid"
+    assert call["mode"] is None
     assert call["image"] == "https://example.com/img.jpg"
 
 

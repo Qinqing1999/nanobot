@@ -299,18 +299,22 @@ class VideoGenerationTool(Tool):
         """Infer mode and image value from the image parameters.
 
         Returns (mode, image_value) where image_value is:
-        - None for text-to-video
-        - str for single image (mode="img2vid")
+        - None for text-to-video (mode omitted)
+        - str for single image (mode omitted — API auto-detects from ``image``)
         - list[str] for multi-reference (mode="multi_reference")
         - list[str] for keyframes (mode="keyframes")
+
+        Valid API modes are: ``ti2vid``, ``keyframes``, ``multi_reference``.
+        ``img2vid`` is NOT accepted by the API — for single image-to-video
+        the mode must be omitted so the API infers it from ``image``.
         """
         refs = list(reference_images or [])
         keyframes = list(keyframe_images or [])
 
         if refs:
             if len(refs) == 1:
-                # Single image — img2vid mode, image as string
-                return ("img2vid", refs[0])
+                # Single image — omit mode; API auto-detects from image field
+                return (None, refs[0])
             # Multiple reference images — multi_reference mode
             return ("multi_reference", refs)
 

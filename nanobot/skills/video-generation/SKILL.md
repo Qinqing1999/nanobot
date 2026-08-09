@@ -59,10 +59,12 @@ The `mode` parameter is automatically inferred from the image parameters — you
 
 | Image Parameter | Count | Auto Mode |
 |---|---|---|
-| none | — | `ti2vid` |
-| `reference_images` | 1 | `img2vid` |
+| none | — | _(omitted — API defaults to text-to-video)_ |
+| `reference_images` | 1 | _(omitted — API auto-detects from `image` field)_ |
 | `reference_images` | 2-4 | `multi_reference` |
 | `keyframe_images` | 2 | `keyframes` |
+
+> **Note:** The Agnes Video API only accepts `ti2vid`, `keyframes`, and `multi_reference` as valid mode values. `img2vid` is NOT a valid mode — for single image-to-video, the mode is omitted and the API infers it from the presence of the `image` field.
 
 If both `reference_images` and `keyframe_images` are passed, `reference_images` takes priority.
 
