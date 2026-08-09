@@ -51,7 +51,7 @@ async def test_generate_image_tool_stores_artifact_and_source_images(
     ref.write_bytes(PNG_BYTES)
     tool = ImageGenerationTool(
         workspace=tmp_path,
-        config=ImageGenerationToolConfig(enabled=True, max_images_per_turn=2),
+        config=ImageGenerationToolConfig(enabled=True),
         provider_config=ProviderConfig(api_key="sk-or-test"),
     )
 
@@ -60,19 +60,18 @@ async def test_generate_image_tool_stores_artifact_and_source_images(
         reference_images=["ref.png"],
         aspect_ratio="16:9",
         image_size="2K",
-        count=2,
     )
 
     payload = json.loads(result)
     artifacts = payload["artifacts"]
-    assert len(artifacts) == 2
+    assert len(artifacts) == 1
     assert Path(artifacts[0]["path"]).is_file()
     assert artifacts[0]["source_images"] == [str(ref.resolve())]
     assert artifacts[0]["model"] == "openai/gpt-5.4-image-2"
 
     fake = FakeImageClient.instances[0]
     assert fake.kwargs["api_key"] == "sk-or-test"
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 1
     assert fake.calls[0]["aspect_ratio"] == "16:9"
     assert fake.calls[0]["image_size"] == "2K"
 

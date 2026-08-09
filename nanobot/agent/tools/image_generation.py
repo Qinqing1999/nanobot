@@ -13,7 +13,6 @@ from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.schema import (
     ArraySchema,
-    IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
@@ -74,11 +73,6 @@ class ImageGenerationToolConfig(Base):
         ),
         image_size=StringSchema(
             "Optional output size hint supported by the configured provider, e.g. 1K, 2K, 4K, or 1024x1024.",
-        ),
-        count=IntegerSchema(
-            description="Number of images to generate in this turn.",
-            minimum=1,
-            maximum=8,
         ),
         required=["prompt"],
     )
@@ -218,45 +212,34 @@ class ImageGenerationTool(Tool):
         reference_images: list[str] | None = None,
         aspect_ratio: str | None = None,
         image_size: str | None = None,
-        count: int | None = None,
         **kwargs: Any,
     ) -> str:
         client = self._provider_client()
         if client is None:
             return ToolResult.error(f"Error: unsupported image generation provider '{self.config.provider}'")
 
-        requested = count or 1
-        if requested > self.config.max_images_per_turn:
-            return ToolResult.error(
-                "Error: count exceeds tools.imageGeneration.maxImagesPerTurn "
-                f"({self.config.max_images_per_turn})"
-            )
-
         try:
             refs = self._resolve_reference_images(reference_images)
             artifacts: list[dict[str, Any]] = []
-            while len(artifacts) < requested:
-                response = await client.generate(
+            response = await client.generate(
+                prompt=prompt,
+                model=self.config.model,
+                reference_images=refs,
+                aspect_ratio=aspect_ratio or self.config.default_aspect_ratio,
+                image_size=image_size or self.config.default_image_size,
+            )
+            for image_data_url in response.images:
+                artifact = store_generated_image_artifact(
+                    image_data_url,
                     prompt=prompt,
                     model=self.config.model,
-                    reference_images=refs,
-                    aspect_ratio=aspect_ratio or self.config.default_aspect_ratio,
-                    image_size=image_size or self.config.default_image_size,
+                    source_images=refs,
+                    save_dir=self.config.save_dir,
+                    provider=self.config.provider,
                 )
-                for image_data_url in response.images:
-                    artifact = store_generated_image_artifact(
-                        image_data_url,
-                        prompt=prompt,
-                        model=self.config.model,
-                        source_images=refs,
-                        save_dir=self.config.save_dir,
-                        provider=self.config.provider,
-                    )
-                    # Register in session artifact registry
-                    self._register_artifact(artifact, prompt=prompt)
-                    artifacts.append(artifact)
-                    if len(artifacts) >= requested:
-                        break
+                # Register in session artifact registry
+                self._register_artifact(artifact, prompt=prompt)
+                artifacts.append(artifact)
             # Push artifact notification to user (before returning result to LLM)
             if self._bus and artifacts:
                 from nanobot.agent.tools.context import current_request_context
