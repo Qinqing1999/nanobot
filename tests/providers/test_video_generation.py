@@ -602,3 +602,66 @@ async def test_create_task_with_num_inference_steps() -> None:
 
     assert captured_body["num_inference_steps"] == 50
     await client._client.aclose()
+
+
+# -- Error kind classification tests ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_task_429_retry_exhausted_kind_is_rate_limit() -> None:
+    """Retryable 429 that exhausts all retries should raise with kind='rate_limit'."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            text='{"error": {"message": "rate_limit_exceeded"}}',
+            headers={"retry-after": "0.01"},
+            request=req,
+        )
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        await client.create_task(model="agnes-video-v2.0", prompt="test")
+    assert exc_info.value.kind == "rate_limit"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_429_quota_kind_is_quota_exhausted() -> None:
+    """Non-retryable 429 (quota) should raise with kind='quota_exhausted'."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            text='{"error": {"message": "insufficient_quota"}}',
+            request=req,
+        )
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        await client.create_task(model="agnes-video-v2.0", prompt="test")
+    assert exc_info.value.kind == "quota_exhausted"
+    await client._client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_task_timeout_kind_is_unknown() -> None:
+    """Timeout error should raise with kind='unknown'."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("timed out")
+
+    client = AgnesVideoGenerationClient(
+        api_key="test-key",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(VideoGenerationError) as exc_info:
+        await client.create_task(model="agnes-video-v2.0", prompt="test")
+    assert exc_info.value.kind == "unknown"
+    await client._client.aclose()

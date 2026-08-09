@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +37,33 @@ if TYPE_CHECKING:
 
 _VIDEO_POLL_INTERVAL_S = 10.0
 _VIDEO_POLL_MAX_DURATION_S = 300.0  # 5 minutes
+_VIDEO_CREATE_POLL_INTERVAL_S = 15.0
+_VIDEO_CREATE_POLL_TIMEOUT_S = 180.0  # 3 minutes
+
+# ---------------------------------------------------------------------------
+# Pending video task tracking (dedup)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _PendingTask:
+    """Tracks a video task from creation attempt to terminal state."""
+
+    state: str  # "creating" | "polling"
+    video_id: str | None = None
+    channel: str = ""
+    chat_id: str = ""
+
+
+# Module-level dict: dedup_key → _PendingTask.
+# Process-lifetime only (restart = lost), consistent with ADR-0002.
+_pending_video_tasks: dict[str, _PendingTask] = {}
+
+
+def _clear_pending_video_tasks() -> None:
+    """Clear all pending video task entries. For testing only."""
+    _pending_video_tasks.clear()
+
 
 # Duration presets: (num_frames, frame_rate)
 _DURATION_PRESETS: dict[str, tuple[int, int]] = {
@@ -280,6 +309,32 @@ class VideoGenerationTool(Tool):
 
         return (None, None)
 
+    @staticmethod
+    def _dedup_key(
+        *,
+        session_key: str,
+        prompt: str,
+        image_value: str | list[str] | None,
+        final_mode: str | None,
+        width: int,
+        height: int,
+        num_frames: int,
+        frame_rate: int,
+    ) -> str:
+        """Compute a dedup key from the parameters that define content identity.
+
+        Excludes seed, negative_prompt, num_inference_steps (affect quality /
+        randomness, not content semantics). URL and file path compared as
+        string literals — no content-level dedup.
+        """
+        image_repr = "" if image_value is None else str(image_value)
+        mode_repr = final_mode or ""
+        raw = (
+            f"{session_key}|{prompt}|{image_repr}|{mode_repr}|"
+            f"{width}x{height}|{num_frames}f{frame_rate}"
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()
+
     async def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         prompt: str,
@@ -295,6 +350,12 @@ class VideoGenerationTool(Tool):
         seed: int | None = None,
         **kwargs: Any,
     ) -> str:
+        from nanobot.agent.tools.context import current_request_context
+
+        request_ctx = current_request_context()
+        if request_ctx is None:
+            return ToolResult.error("Error: no request context for video generation")
+
         client = self._provider_client()
         if client is None:
             return ToolResult.error(
@@ -322,6 +383,37 @@ class VideoGenerationTool(Tool):
         inferred_mode, image_value = self._infer_mode(resolved_refs, resolved_keyframes)
         final_mode = inferred_mode  # always inferred, overrides explicit mode
 
+        channel = request_ctx.channel
+        chat_id = request_ctx.chat_id
+        session_key = request_ctx.session_key or f"{channel}:{chat_id}"
+
+        # Dedup: check if an identical task is already in progress
+        dedup_key = self._dedup_key(
+            session_key=session_key,
+            prompt=prompt,
+            image_value=image_value,
+            final_mode=final_mode,
+            width=width,
+            height=height,
+            num_frames=final_num_frames,
+            frame_rate=final_frame_rate,
+        )
+        existing = _pending_video_tasks.get(dedup_key)
+        if existing is not None:
+            if existing.state == "polling" and existing.video_id:
+                return (
+                    f"已有一个相同的视频任务正在生成中，"
+                    f"任务 ID: {existing.video_id}，请勿重复调用。"
+                )
+            return "已有一个相同的视频任务正在创建中（遇到限速，后台持续重试），请勿重复调用。"
+
+        # Register as "creating" to prevent duplicate submissions
+        _pending_video_tasks[dedup_key] = _PendingTask(
+            state="creating",
+            channel=channel,
+            chat_id=chat_id,
+        )
+
         try:
             task = await client.create_task(
                 model=self.config.model,
@@ -337,17 +429,47 @@ class VideoGenerationTool(Tool):
                 negative_prompt=negative_prompt,
             )
         except VideoGenerationError as exc:
+            if exc.kind == "rate_limit":
+                # Schedule background creation polling — non-blocking
+                coro = self._create_with_polling(
+                    client=client,
+                    prompt=prompt,
+                    image_value=image_value,
+                    final_mode=final_mode,
+                    width=width,
+                    height=height,
+                    final_num_frames=final_num_frames,
+                    final_frame_rate=final_frame_rate,
+                    num_inference_steps=num_inference_steps,
+                    seed=seed,
+                    negative_prompt=negative_prompt,
+                    channel=channel,
+                    chat_id=chat_id,
+                    session_key=session_key,
+                    dedup_key=dedup_key,
+                )
+                safe_coro = self._safe_poll(coro)
+                if self._schedule_background is not None:
+                    self._schedule_background(safe_coro)
+                else:
+                    asyncio.create_task(safe_coro)
+                return (
+                    "遇到限速，正在后台持续重试创建，最长 3 分钟，完成后自动通知你。"
+                    "请勿重复调用此工具。"
+                )
+            # quota_exhausted or unknown — push notification and fail
+            if exc.kind == "quota_exhausted" and self.bus:
+                await self.bus.publish_outbound(OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=f"❌ 视频创建失败：{exc}",
+                ))
+            _pending_video_tasks.pop(dedup_key, None)
             return ToolResult.error(f"Error: {exc}")
 
-        from nanobot.agent.tools.context import current_request_context
-
-        request_ctx = current_request_context()
-        if request_ctx is None:
-            return ToolResult.error("Error: no request context for video generation")
-
-        channel = request_ctx.channel
-        chat_id = request_ctx.chat_id
-        session_key = request_ctx.session_key or f"{channel}:{chat_id}"
+        # Task created successfully — transition to "polling" state
+        _pending_video_tasks[dedup_key].state = "polling"
+        _pending_video_tasks[dedup_key].video_id = task.video_id
 
         # Push "start" notification
         if self.bus:
@@ -370,6 +492,7 @@ class VideoGenerationTool(Tool):
             channel=channel,
             chat_id=chat_id,
             session_key=session_key,
+            dedup_key=dedup_key,
         )
         safe_coro = self._safe_poll(coro)
         if self._schedule_background is not None:
@@ -394,6 +517,114 @@ class VideoGenerationTool(Tool):
         except Exception:
             logger.exception("Video background polling task failed")
 
+    async def _create_with_polling(
+        self,
+        *,
+        client: VideoGenerationProvider,
+        prompt: str,
+        image_value: str | list[str] | None,
+        final_mode: str | None,
+        width: int,
+        height: int,
+        final_num_frames: int,
+        final_frame_rate: int,
+        num_inference_steps: int | None,
+        seed: int | None,
+        negative_prompt: str | None,
+        channel: str,
+        chat_id: str,
+        session_key: str,
+        dedup_key: str,
+    ) -> None:
+        """Background creation polling — retries create_task on rate limit.
+
+        Runs every 15s with a 3-minute wall-clock timeout. On success,
+        pushes the 'start' notification and enters _poll_and_deliver.
+        On timeout or quota exhaustion, pushes an OutboundMessage.
+        """
+        start_time = time.monotonic()
+
+        try:
+            while True:
+                elapsed = time.monotonic() - start_time
+                if elapsed > _VIDEO_CREATE_POLL_TIMEOUT_S:
+                    if self.bus:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=channel,
+                            chat_id=chat_id,
+                            content=(
+                                "❌ 视频创建失败：持续限速 3 分钟，请稍后再试。"
+                            ),
+                        ))
+                    return
+
+                await asyncio.sleep(_VIDEO_CREATE_POLL_INTERVAL_S)
+
+                try:
+                    task = await client.create_task(
+                        model=self.config.model,
+                        prompt=prompt,
+                        image=image_value,
+                        mode=final_mode,
+                        width=width,
+                        height=height,
+                        num_frames=final_num_frames,
+                        frame_rate=final_frame_rate,
+                        num_inference_steps=num_inference_steps,
+                        seed=seed,
+                        negative_prompt=negative_prompt,
+                    )
+                except VideoGenerationError as exc:
+                    if exc.kind == "rate_limit":
+                        logger.warning(
+                            "Video creation still rate-limited after {:.0f}s, "
+                            "will retry in {}s",
+                            elapsed, _VIDEO_CREATE_POLL_INTERVAL_S,
+                        )
+                        continue
+                    # quota_exhausted or unknown — notify and stop
+                    if self.bus:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=channel,
+                            chat_id=chat_id,
+                            content=f"❌ 视频创建失败：{exc}",
+                        ))
+                    return
+
+                # Success — transition to "polling" and push start notification
+                _pending_video_tasks[dedup_key].state = "polling"
+                _pending_video_tasks[dedup_key].video_id = task.video_id
+
+                if self.bus:
+                    await self.bus.publish_outbound(OutboundMessage(
+                        channel=channel,
+                        chat_id=chat_id,
+                        content=(
+                            f"🎬 视频正在生成中...\n"
+                            f"**任务 ID**: `{task.video_id}`\n"
+                            f"预计需要 1-5 分钟，完成后会自动发送给你。"
+                        ),
+                    ))
+
+                # Enter status polling
+                await self._poll_and_deliver(
+                    video_id=task.video_id,
+                    client=client,
+                    prompt=prompt,
+                    channel=channel,
+                    chat_id=chat_id,
+                    session_key=session_key,
+                    dedup_key=dedup_key,
+                )
+                return
+
+        except asyncio.CancelledError:
+            logger.info("Video creation polling cancelled for session {}", session_key)
+            raise
+        finally:
+            if dedup_key and _pending_video_tasks.get(dedup_key, _PendingTask(state="polling")).state == "creating":
+                _pending_video_tasks.pop(dedup_key, None)
+
     async def _poll_and_deliver(
         self,
         *,
@@ -403,6 +634,7 @@ class VideoGenerationTool(Tool):
         channel: str,
         chat_id: str,
         session_key: str,
+        dedup_key: str = "",
     ) -> None:
         """Background polling task — runs until completion or timeout."""
         start_time = time.monotonic()
@@ -576,6 +808,9 @@ class VideoGenerationTool(Tool):
         except asyncio.CancelledError:
             logger.info("Video polling cancelled for {}", video_id)
             raise
+        finally:
+            if dedup_key:
+                _pending_video_tasks.pop(dedup_key, None)
 
     @staticmethod
     async def _download_video(url: str) -> bytes:

@@ -94,8 +94,16 @@ class VideoTaskResponse:
 
 
 class VideoGenerationError(Exception):
-    """Video generation error."""
-    pass
+    """Video generation error.
+
+    The ``kind`` attribute classifies the error so callers can decide
+    whether to retry (rate_limit), give up immediately (quota_exhausted),
+    or treat as unexpected (unknown).
+    """
+
+    def __init__(self, message: str, *, kind: str = "unknown") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 # Status values the API may return that mean "completed".
@@ -293,8 +301,13 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
                             )
                             await asyncio.sleep(delay)
                             continue
+                        raise VideoGenerationError(
+                            f"Agnes video API rate limited: {response.text[:500]}",
+                            kind="rate_limit",
+                        )
                     raise VideoGenerationError(
-                        f"Agnes video API quota exceeded: {response.text[:500]}"
+                        f"Agnes video API quota exceeded: {response.text[:500]}",
+                        kind="quota_exhausted",
                     )
                 response.raise_for_status()
                 data = response.json()
@@ -308,14 +321,18 @@ class AgnesVideoGenerationClient(VideoGenerationProvider):
                     created_at=data.get("created_at"),
                 )
             except httpx.TimeoutException:
-                raise VideoGenerationError("Agnes video task creation timed out")
+                raise VideoGenerationError(
+                    "Agnes video task creation timed out", kind="unknown",
+                )
             except httpx.RequestError as exc:
-                raise VideoGenerationError(f"Request failed: {exc}")
+                raise VideoGenerationError(f"Request failed: {exc}", kind="unknown")
             finally:
                 if self._client is None:
                     await client.aclose()
 
-        raise VideoGenerationError("Agnes video task creation failed after retries")
+        raise VideoGenerationError(
+            "Agnes video task creation failed after retries", kind="rate_limit",
+        )
 
     async def get_task_status(self, video_id: str) -> VideoTaskResponse:
         if not self.api_key:
