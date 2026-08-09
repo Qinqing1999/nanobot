@@ -491,6 +491,10 @@ class AgentRunner:
         injection_cycles = 0
         compacted_tool_call_ids: set[str] = set()
         pending_stream_content: str | None = None
+        # Track consecutive iterations where ALL tool calls were blocked as
+        # duplicate lookups. After a threshold, force-stop the tool loop to
+        # avoid spinning uselessly when the LLM ignores the error message.
+        consecutive_all_blocked_iterations = 0
         conversation_state = ProviderConversationStateController(
             provider=spec.runtime.provider,
             model=spec.runtime.model,
@@ -605,6 +609,78 @@ class AgentRunner:
                 )
                 context.tool_results = list(results)
                 context.tool_events = list(new_events)
+
+                # Check if ALL tool calls in this iteration were blocked as
+                # repeated external lookups. If this happens repeatedly,
+                # force-stop the tool loop to avoid wasting iterations.
+                all_blocked = bool(
+                    new_events
+                    and all(
+                        event.get("detail", "").startswith("repeated external lookup blocked")
+                        for event in new_events
+                    )
+                )
+                if all_blocked:
+                    consecutive_all_blocked_iterations += 1
+                    if consecutive_all_blocked_iterations >= 2:
+                        logger.warning(
+                            "All tool calls blocked for {} consecutive iterations in {}; "
+                            "forcing finalization to avoid wasted loops",
+                            consecutive_all_blocked_iterations,
+                            spec.session_key or "default",
+                        )
+                        # Append a message explaining the forced stop
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "All your recent tool calls have been blocked as duplicate lookups. "
+                                "You must now provide a final answer using the information you "
+                                "already have. Do not attempt any more tool calls."
+                            ),
+                        })
+                        # Break out of the iteration loop, which will trigger finalization
+                        stop_reason = "max_iterations"
+                        drained, injection_cycles = await self._try_drain_injections(
+                            spec, messages, None, injection_cycles,
+                            phase="after forced stop",
+                        )
+                        if drained:
+                            had_injections = True
+                        terminal_content = None
+                        if spec.finalize_on_max_iterations:
+                            terminal_content = await self._try_finalize_after_max_iterations(
+                                spec,
+                                hook,
+                                messages,
+                                usage,
+                                conversation_state,
+                            )
+                        if terminal_content is None:
+                            terminal_content = self._max_iterations_fallback(spec)
+                        if length_recovery_parts:
+                            terminal_tail = f"\n\n{terminal_content.lstrip()}"
+                            final_content = (
+                                "".join(length_recovery_parts).rstrip() + terminal_tail
+                            ).strip()
+                            pending_stream_content = terminal_tail
+                        else:
+                            final_content = terminal_content
+                        self._append_final_message(messages, terminal_content)
+                        return AgentRunResult(
+                            final_content=final_content,
+                            messages=messages,
+                            tools_used=tools_used,
+                            usage=usage,
+                            stop_reason=stop_reason,
+                            error=error,
+                            tool_events=tool_events,
+                            had_injections=had_injections,
+                            pending_stream_content=pending_stream_content,
+                            provider_state=conversation_state.finish(messages),
+                        )
+                else:
+                    # At least one tool call succeeded or failed for a different reason
+                    consecutive_all_blocked_iterations = 0
                 completed_tool_results: list[dict[str, Any]] = []
                 for tool_call, result in zip(response.tool_calls, results):
                     tool_message = {

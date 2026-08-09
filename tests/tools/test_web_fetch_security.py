@@ -538,3 +538,40 @@ async def test_web_fetch_does_not_request_private_redirect_target(monkeypatch):
     assert "error" in data
     assert "redirect blocked" in data["error"].lower()
     assert requested == ["https://attacker.example/start"]
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_readability_returns_type_name_for_empty_message_exceptions(monkeypatch):
+    """httpx.ConnectTimeout and similar exceptions have empty str() messages.
+
+    The error JSON returned to the LLM must include the exception type name
+    (e.g. "ConnectTimeout") so the model understands what went wrong instead
+    of receiving {"error": ""}.
+    """
+    tool = WebFetchTool(config=WebFetchConfig(use_jina_reader=False))
+
+    class TimeoutClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None, follow_redirects=False, **kwargs):
+            raise httpx.ConnectTimeout("")
+
+    monkeypatch.setattr("nanobot.agent.tools.web.httpx.AsyncClient", TimeoutClient)
+    monkeypatch.setattr(web_module, "_pinned_dns_transport", lambda: object())
+
+    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+        result = await tool._fetch_readability("https://example.com/page", "markdown", 5000)
+
+    data = json.loads(result)
+    assert "error" in data
+    assert data["error"] == "ConnectTimeout", (
+        f"Expected 'ConnectTimeout', got '{data['error']}' — empty exception messages "
+        "must fall back to the type name so the LLM gets a meaningful error."
+    )

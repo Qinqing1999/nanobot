@@ -239,3 +239,61 @@ async def test_runner_throttles_repeated_workspace_bypass_attempts():
         "expected at least one escalated workspace_violation event, got: "
         f"{result.tool_events}"
     )
+
+
+@pytest.mark.asyncio
+async def test_runner_force_stops_after_consecutive_all_blocked_lookups():
+    """When ALL tool calls are blocked as duplicate lookups for 2 consecutive
+    iterations, the runner force-stops instead of letting the LLM spin.
+
+    Reproduces the scenario from the bug report: web_fetch times out with
+    httpx.ConnectTimeout, the LLM falls back to web_search with the same
+    query repeatedly, and the repeated-lookup blocker fires on every
+    iteration.  Without the force-stop the LLM would keep trying indefinitely.
+    """
+    query = "capybara couple wallpaper free download"
+    # Iterations 1-2: web_search executes (count ≤ 2, not blocked yet)
+    # Iteration 3:   web_search blocked (count = 3) → consecutive_all_blocked = 1
+    # Iteration 4:   web_search blocked (count = 4) → consecutive_all_blocked = 2 → force-stop
+    # Iteration 5:   finalization call (no tools)
+    responses: list[LLMResponse] = [
+        LLMResponse(
+            content=f"try {i}",
+            tool_calls=[ToolCallRequest(
+                id=f"search_{i}", name="web_search",
+                arguments={"query": query},
+            )],
+        )
+        for i in range(1, 5)
+    ]
+    responses.append(LLMResponse(content="I could not find the image.", tool_calls=[]))
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(side_effect=responses)
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value='{"results": []}')
+
+    runner = AgentRunner()
+    result = await runner.run(make_run_spec(
+        provider,
+        initial_messages=[],
+        tools=tools,
+        model="test-model",
+        max_iterations=10,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    # Force-stopped, not run to max_iterations=10
+    assert result.stop_reason == "max_iterations"
+    assert result.final_content is not None
+    # 4 tool iterations + 1 finalization = 5 provider calls
+    assert provider.chat_with_retry.await_count == 5, (
+        f"Expected 5 provider calls (4 tool + 1 finalize), got "
+        f"{provider.chat_with_retry.await_count}"
+    )
+    # Tool was executed only in iterations 1-2 (before blocking kicked in)
+    assert tools.execute.await_count == 2, (
+        f"Expected 2 tool executions (iterations 1-2), got "
+        f"{tools.execute.await_count}"
+    )

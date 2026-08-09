@@ -1161,7 +1161,8 @@ class WebFetchTool(Tool):
             return json.dumps({"error": f"Proxy error: {e}", "url": url}, ensure_ascii=False)
         except Exception as e:
             logger.exception("WebFetch error for {}", url)
-            return json.dumps({"error": str(e), "url": url}, ensure_ascii=False)
+            error_msg = str(e).strip() or type(e).__name__
+            return json.dumps({"error": error_msg, "url": url}, ensure_ascii=False)
 
     def _extract_readable_html(self, html_content: str, extract_mode: str) -> str:
         from readability import Document  # pyright: ignore[reportMissingTypeStubs]
