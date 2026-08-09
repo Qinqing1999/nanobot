@@ -80,6 +80,19 @@ _DURATION_PRESETS: dict[str, tuple[int, int]] = {
     "18s": (441, 24),
 }
 
+
+def _parse_duration_seconds(duration: str) -> float | None:
+    """Parse a duration string like "15s" or "7.5s" into seconds.
+
+    Returns None if the string cannot be parsed.
+    """
+    import re
+
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)s", duration.strip())
+    if match:
+        return float(match.group(1))
+    return None
+
 # Aspect ratio → (width, height)
 _ASPECT_RATIO_SIZES: dict[str, tuple[int, int]] = {
     "16:9": (1152, 768),
@@ -137,7 +150,8 @@ class VideoGenerationToolConfig(Base):
             nullable=True,
         ),
         duration=StringSchema(
-            "目标时长: 3s, 5s, 10s, 18s。自动设置 num_frames 和 frame_rate。",
+            "目标时长，如 3s, 5s, 10s, 15s, 18s 等。自动设置 num_frames 和 frame_rate。"
+            "预设值 3s/5s/10s/18s 使用精确帧数，其他值按 seconds*24+1 动态计算。",
             nullable=True,
         ),
         num_frames=IntegerSchema(
@@ -308,6 +322,23 @@ class VideoGenerationTool(Tool):
             if duration and duration in _DURATION_PRESETS
             else (self.config.default_num_frames, self.config.default_frame_rate)
         )
+
+        # Parse arbitrary duration strings (e.g. "15s", "7s") that are not
+        # in the preset table.  Formula: num_frames = seconds * frame_rate + 1,
+        # matching the 5s/10s presets (121=5*24+1, 241=10*24+1).
+        if (
+            duration
+            and duration not in _DURATION_PRESETS
+            and not num_frames_override
+        ):
+            parsed = _parse_duration_seconds(duration)
+            if parsed is not None:
+                preset_frames = round(parsed * preset_rate) + 1
+                logger.info(
+                    "Duration '{}' not a preset; computed num_frames={}",
+                    duration, preset_frames,
+                )
+
         final_frames = num_frames_override if num_frames_override is not None else preset_frames
         final_rate = frame_rate_override if frame_rate_override is not None else preset_rate
         return (final_frames, final_rate)

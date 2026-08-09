@@ -751,3 +751,91 @@ async def test_delivery_dedup_across_both_paths(monkeypatch) -> None:
 async def _async_return(value: Any) -> Any:
     """Helper: return a value from an async context."""
     return value
+
+
+# ---------------------------------------------------------------------------
+# Duration parsing tests — arbitrary duration support
+# ---------------------------------------------------------------------------
+
+
+class TestParseDurationSeconds:
+    """Tests for _parse_duration_seconds helper."""
+
+    def test_parse_integer_seconds(self):
+        from nanobot.agent.tools.video_generation import _parse_duration_seconds
+
+        assert _parse_duration_seconds("15s") == 15.0
+        assert _parse_duration_seconds("3s") == 3.0
+        assert _parse_duration_seconds("10s") == 10.0
+
+    def test_parse_decimal_seconds(self):
+        from nanobot.agent.tools.video_generation import _parse_duration_seconds
+
+        assert _parse_duration_seconds("7.5s") == 7.5
+        assert _parse_duration_seconds("0.5s") == 0.5
+
+    def test_parse_with_whitespace(self):
+        from nanobot.agent.tools.video_generation import _parse_duration_seconds
+
+        assert _parse_duration_seconds(" 15s ") == 15.0
+
+    def test_parse_invalid_returns_none(self):
+        from nanobot.agent.tools.video_generation import _parse_duration_seconds
+
+        assert _parse_duration_seconds("15") is None
+        assert _parse_duration_seconds("abc") is None
+        assert _parse_duration_seconds("") is None
+        assert _parse_duration_seconds("15sec") is None
+
+
+class TestResolveDurationDynamic:
+    """Tests for _resolve_duration with non-preset durations."""
+
+    def test_preset_5s_uses_exact_frames(self):
+        """Preset '5s' should use the exact preset (121, 24)."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration("5s")
+        assert frames == 121
+        assert rate == 24
+
+    def test_preset_10s_uses_exact_frames(self):
+        """Preset '10s' should use the exact preset (241, 24)."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration("10s")
+        assert frames == 241
+        assert rate == 24
+
+    def test_non_preset_15s_computed_dynamically(self):
+        """'15s' (not a preset) should compute num_frames = 15*24+1 = 361."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration("15s")
+        assert frames == 361  # 15 * 24 + 1
+        assert rate == 24
+
+    def test_non_preset_7s_computed_dynamically(self):
+        """'7s' should compute num_frames = 7*24+1 = 169."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration("7s")
+        assert frames == 169  # 7 * 24 + 1
+        assert rate == 24
+
+    def test_none_duration_uses_default(self):
+        """None duration should use config defaults."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration(None)
+        assert frames == 121  # default_num_frames
+        assert rate == 24  # default_frame_rate
+
+    def test_invalid_duration_falls_back_to_default(self):
+        """Unparseable duration should fall back to config defaults."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration("invalid")
+        assert frames == 121  # default_num_frames
+        assert rate == 24  # default_frame_rate
+
+    def test_num_frames_override_takes_precedence(self):
+        """Explicit num_frames should override both presets and dynamic calc."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        frames, rate = tool._resolve_duration("15s", num_frames_override=200)
+        assert frames == 200
+        assert rate == 24
