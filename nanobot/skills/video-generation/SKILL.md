@@ -149,6 +149,8 @@ The `generate_video` tool runs **asynchronously**:
 3. When complete, the video is **automatically pushed** to the user's chat
 4. You do NOT need to call `message` to deliver the video — it's handled automatically
 
+**CRITICAL: Do NOT call `check_video` repeatedly to poll status.** The background polling handles this automatically. Each `check_video` call consumes API quota and can trigger 429 rate limits that affect both your manual query AND the background polling. Only use `check_video` when the user explicitly asks about video status — never call it in a loop.
+
 Tell the user: "🎬 视频正在生成中... 预计需要 1-5 分钟，完成后会自动发送给你。"
 
 ## Artifact Rules

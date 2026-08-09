@@ -544,3 +544,32 @@ class TestResolveArtifactId:
         assert not result.startswith("data:")
         assert base64.b64decode(result) == raw
         fake_session.artifact_registry.resolve_path.assert_called_once_with("img_12345")
+
+    def test_file_path_resolved_to_pure_base64(self, tmp_path):
+        """Direct file paths (e.g. from generate_image tool result) should be
+        converted to pure base64 even when not registered as artifact IDs."""
+        import base64
+
+        # Create a fake image file
+        img_path = tmp_path / "img_abc123.png"
+        raw = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        img_path.write_bytes(raw)
+
+        # Tool with sessions=None — artifact ID lookup will be skipped,
+        # but file path fallback should still work
+        config = VideoGenerationToolConfig(enabled=True, provider="fake")
+        tool = VideoGenerationTool(
+            workspace="/tmp",
+            config=config,
+            provider_configs={},
+            bus=MagicMock(),
+            sessions=None,
+            schedule_background=lambda coro: coro.close(),
+        )
+
+        result = tool._resolve_artifact_id(str(img_path))
+
+        # Must be pure base64 — NOT a data URL and NOT the original path
+        assert not result.startswith("data:")
+        assert result != str(img_path)
+        assert base64.b64decode(result) == raw

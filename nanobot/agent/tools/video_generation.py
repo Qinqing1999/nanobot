@@ -235,16 +235,24 @@ class VideoGenerationTool(Tool):
         return cls(**kwargs)
 
     def _resolve_artifact_id(self, value: str) -> str:
-        """Resolve an artifact ID to a file path or URL.
+        """Resolve an artifact ID, file path, or URL to an API-ready value.
 
-        For local files (resolved from artifact IDs), returns **pure base64**
-        data (without the ``data:`` prefix) because the Agnes Video API rejects
-        data URLs with the error ``image base64 decode failed: Only base64
-        data is allowed``.  HTTP(S) URLs are returned as-is.
+        Accepts:
+        - HTTP(S) URLs → returned as-is
+        - Four-digit numeric artifact IDs (e.g. ``1020``) → resolved via
+          session artifact registry to a local file path, then converted to
+          pure base64
+        - Local file paths (absolute or relative) → read and converted to
+          pure base64
+
+        For local files, returns **pure base64** data (without the ``data:``
+        prefix) because the Agnes Video API rejects data URLs with the error
+        ``image base64 decode failed: Only base64 data is allowed``.
         """
         if value.startswith(("http://", "https://")):
             return value
-        # Try as artifact ID
+
+        # Try as four-digit numeric artifact ID first
         from nanobot.agent.tools.context import current_request_context
 
         request_ctx = current_request_context()
@@ -255,6 +263,17 @@ class VideoGenerationTool(Tool):
                 path = session.artifact_registry.resolve_path(value)
                 if path:
                     return self._local_path_to_base64(path)
+
+        # Try as a local file path (LLM may pass the path directly)
+        try:
+            p = Path(value).expanduser()
+            if p.is_file():
+                return self._local_path_to_base64(str(p))
+        except (OSError, ValueError):
+            pass
+
+        # If nothing matched, return as-is (will likely fail at the API,
+        # but we let the API provide a specific error message)
         return value
 
     @staticmethod
@@ -518,7 +537,7 @@ class VideoGenerationTool(Tool):
             f"视频任务已创建。任务 ID: {task.video_id}\n"
             f"状态: {task.status}\n"
             f"后台正在轮询，完成后会自动推送视频给你。\n"
-            f"你也可以问我\"视频好了吗？\"来查询进度。"
+            f"请勿调用 check_video 反复查询，后台会自动通知。"
         )
 
     @staticmethod
@@ -890,7 +909,12 @@ class CheckVideoTool(Tool):
 
     @property
     def description(self) -> str:
-        return "查询视频生成任务的状态。输入 video_id 返回当前状态和进度。"
+        return (
+            "查询视频生成任务的状态。输入 video_id 返回当前状态和进度。"
+            "重要：后台已自动轮询，视频完成后会自动推送给用户。"
+            "请勿反复调用此工具查询进度——每次调用都会消耗 API 配额并可能触发限流。"
+            "只有在用户明确询问视频状态时才调用，且每次调用后应等待用户回复，不要自动连续查询。"
+        )
 
     def _provider_client(self) -> VideoGenerationProvider | None:
         provider = self.provider_configs.get(self.config.provider)
@@ -939,6 +963,11 @@ class CheckVideoTool(Tool):
                 result += "\n✅ 视频已下载并推送给用户。"
             elif status.status == "completed" and not status.video_url:
                 result += "\n⚠️ 视频已完成但未获取到下载链接。"
+            elif status.status in ("queued", "in_progress"):
+                result += (
+                    "\n⏳ 视频仍在生成中，后台正在自动轮询。"
+                    "完成后会自动推送给用户，请勿再次调用 check_video。"
+                )
 
             return result
         except VideoGenerationError as exc:
@@ -946,7 +975,9 @@ class CheckVideoTool(Tool):
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 return ToolResult.error(
-                    "Error: 查询过于频繁，API 返回 429 Too Many Requests。请等待 10 秒后再试。"
+                    "Error: 查询过于频繁，API 返回 429。"
+                    "后台正在自动轮询，视频完成后会自动推送。"
+                    "请勿再次调用 check_video，请等待用户主动询问或后台通知。"
                 )
             return ToolResult.error(f"Error: HTTP {exc.response.status_code}: {exc}")
         except httpx.HTTPError as exc:
