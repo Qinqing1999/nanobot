@@ -235,7 +235,13 @@ class VideoGenerationTool(Tool):
         return cls(**kwargs)
 
     def _resolve_artifact_id(self, value: str) -> str:
-        """Resolve an artifact ID to a file path or URL."""
+        """Resolve an artifact ID to a file path or URL.
+
+        For local files (resolved from artifact IDs), returns **pure base64**
+        data (without the ``data:`` prefix) because the Agnes Video API rejects
+        data URLs with the error ``image base64 decode failed: Only base64
+        data is allowed``.  HTTP(S) URLs are returned as-is.
+        """
         if value.startswith(("http://", "https://")):
             return value
         # Try as artifact ID
@@ -248,19 +254,21 @@ class VideoGenerationTool(Tool):
                 session = sessions.get_or_create(request_ctx.session_key)
                 path = session.artifact_registry.resolve_path(value)
                 if path:
-                    return self._local_path_to_data_url(path)
+                    return self._local_path_to_base64(path)
         return value
 
     @staticmethod
-    def _local_path_to_data_url(path: str) -> str:
-        """Convert local file to base64 data URL for API submission."""
+    def _local_path_to_base64(path: str) -> str:
+        """Convert a local file to **pure base64** data for API submission.
+
+        The Agnes Video API expects either a publicly accessible URL or raw
+        base64 data (without a ``data:`` prefix).  Data URLs cause a
+        ``image base64 decode failed`` error.
+        """
         import base64
-        import mimetypes
 
         raw = Path(path).read_bytes()
-        mime = mimetypes.guess_type(path)[0] or "image/png"
-        encoded = base64.b64encode(raw).decode("ascii")
-        return f"data:{mime};base64,{encoded}"
+        return base64.b64encode(raw).decode("ascii")
 
     def _resolve_duration(
         self,
@@ -292,23 +300,19 @@ class VideoGenerationTool(Tool):
 
         Returns (mode, image_value) where image_value is:
         - None for text-to-video
-        - str for single image (mode omitted — API auto-detects)
+        - str for single image (mode="img2vid")
+        - list[str] for multi-reference (mode="multi_reference")
         - list[str] for keyframes (mode="keyframes")
-
-        The Agnes API only supports:
-        * text-to-video:  mode omitted, no image
-        * single image:   mode omitted, image as str
-        * keyframes:      mode="keyframes", image as list[str]
         """
         refs = list(reference_images or [])
         keyframes = list(keyframe_images or [])
 
         if refs:
             if len(refs) == 1:
-                # Single image — omit mode, pass image as string
-                return (None, refs[0])
-            # Multiple reference images — only keyframes mode is supported
-            return ("keyframes", refs)
+                # Single image — img2vid mode, image as string
+                return ("img2vid", refs[0])
+            # Multiple reference images — multi_reference mode
+            return ("multi_reference", refs)
 
         if keyframes:
             return ("keyframes", keyframes)

@@ -415,16 +415,16 @@ class TestInferMode:
         assert mode is None
         assert image is None
 
-    def test_single_reference_image_returns_none_mode(self):
-        """Single reference image → mode omitted (None), image as str."""
+    def test_single_reference_image_returns_img2vid(self):
+        """Single reference image → mode=img2vid, image as str."""
         mode, image = VideoGenerationTool._infer_mode(["img1.png"], None)
-        assert mode is None
+        assert mode == "img2vid"
         assert image == "img1.png"
 
-    def test_multiple_reference_images_returns_keyframes(self):
-        """Multiple reference images → keyframes mode, image as list."""
+    def test_multiple_reference_images_returns_multi_reference(self):
+        """Multiple reference images → multi_reference mode, image as list."""
         mode, image = VideoGenerationTool._infer_mode(["img1.png", "img2.png"], None)
-        assert mode == "keyframes"
+        assert mode == "multi_reference"
         assert image == ["img1.png", "img2.png"]
 
     def test_keyframe_images_returns_keyframes(self):
@@ -436,13 +436,106 @@ class TestInferMode:
     def test_reference_images_take_priority_over_keyframes(self):
         """When both are provided, reference_images takes priority."""
         mode, image = VideoGenerationTool._infer_mode(["ref.png"], ["kf1.png", "kf2.png"])
-        assert mode is None
+        assert mode == "img2vid"
         assert image == "ref.png"
 
-    def test_three_reference_images_returns_keyframes(self):
-        """3 reference images → keyframes mode."""
+    def test_three_reference_images_returns_multi_reference(self):
+        """3 reference images → multi_reference mode."""
         mode, image = VideoGenerationTool._infer_mode(
             ["img1.png", "img2.png", "img3.png"], None
         )
-        assert mode == "keyframes"
+        assert mode == "multi_reference"
         assert image == ["img1.png", "img2.png", "img3.png"]
+
+
+# ---------------------------------------------------------------------------
+# _local_path_to_base64 tests
+# ---------------------------------------------------------------------------
+
+
+class TestLocalPathToBase64:
+    """Tests for VideoGenerationTool._local_path_to_base64 static method."""
+
+    def test_returns_pure_base64_without_data_prefix(self, tmp_path):
+        """Output must NOT contain a ``data:`` prefix (causes Agnes API error)."""
+        import base64
+
+        img = tmp_path / "test.png"
+        raw = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"  # minimal PNG header
+        img.write_bytes(raw)
+
+        result = VideoGenerationTool._local_path_to_base64(str(img))
+
+        # Must NOT start with "data:" — this is the root cause of the bug
+        assert not result.startswith("data:")
+        # Must be valid base64 that decodes back to original bytes
+        assert base64.b64decode(result) == raw
+
+    def test_returns_ascii_string(self, tmp_path):
+        """Output must be a pure ASCII string (safe for JSON)."""
+        img = tmp_path / "test.bin"
+        img.write_bytes(b"\x00\x01\x02\x03")
+        result = VideoGenerationTool._local_path_to_base64(str(img))
+        assert isinstance(result, str)
+        result.encode("ascii")  # raises if not ASCII
+
+
+# ---------------------------------------------------------------------------
+# _resolve_artifact_id tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveArtifactId:
+    """Tests for VideoGenerationTool._resolve_artifact_id."""
+
+    def test_http_url_returned_as_is(self):
+        """HTTP URLs should be returned unchanged."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        assert tool._resolve_artifact_id("https://example.com/img.jpg") == "https://example.com/img.jpg"
+        assert tool._resolve_artifact_id("http://example.com/img.jpg") == "http://example.com/img.jpg"
+
+    def test_unresolvable_value_returned_as_is(self):
+        """Values that are not URLs and can't be resolved as artifact IDs are returned as-is."""
+        tool = _make_tool(provider=FakeVideoProvider())
+        # No session available → returns the value unchanged
+        assert tool._resolve_artifact_id("some_random_id") == "some_random_id"
+
+    def test_artifact_id_resolved_to_pure_base64(self, tmp_path):
+        """Artifact IDs should resolve to pure base64 (no data: prefix)."""
+        import base64
+
+        # Create a fake image file
+        img_path = tmp_path / "generated.png"
+        raw = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        img_path.write_bytes(raw)
+
+        # Create a fake session with artifact registry
+        fake_session = MagicMock()
+        fake_session.artifact_registry.resolve_path.return_value = str(img_path)
+
+        fake_sessions = MagicMock()
+        fake_sessions.get_or_create.return_value = fake_session
+
+        config = VideoGenerationToolConfig(enabled=True, provider="fake")
+        tool = VideoGenerationTool(
+            workspace="/tmp",
+            config=config,
+            provider_configs={},
+            bus=MagicMock(),
+            sessions=fake_sessions,
+            schedule_background=lambda coro: coro.close(),
+        )
+
+        # Mock the request context
+        ctx = RequestContext(
+            channel="test",
+            chat_id="c1",
+            session_key="test:c1",
+        )
+        with request_context(ctx):
+            result = tool._resolve_artifact_id("img_12345")
+
+        # Must be pure base64 — NOT a data URL
+        assert not result.startswith("data:")
+        assert base64.b64decode(result) == raw
+        fake_session.artifact_registry.resolve_path.assert_called_once_with("img_12345")
