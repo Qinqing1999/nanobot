@@ -102,19 +102,53 @@ def build_goal_continue_message(custom: str | None = None) -> dict[str, str]:
     return {"role": "user", "content": custom or SUSTAINED_GOAL_CONTINUE_PROMPT}
 
 
+# Argument keys that carry a search query, ordered by likelihood.
+_SEARCH_QUERY_KEYS: tuple[str, ...] = (
+    "query",
+    "search_term",
+    "searchQuery",
+    "search_query",
+    "q",
+    "search",
+)
+# Argument keys that carry a URL for fetch-style tools.
+_FETCH_URL_KEYS: tuple[str, ...] = ("url", "link", "uri", "page", "address")
+
+
+def _is_mcp_search_tool(tool_name: str) -> bool:
+    """True for MCP tools that perform web searches (e.g. ``mcp_exa_web_search_exa``)."""
+    return tool_name.startswith("mcp_") and "search" in tool_name.lower()
+
+
+def _is_mcp_fetch_tool(tool_name: str) -> bool:
+    """True for MCP tools that fetch a URL (e.g. ``mcp_exa_web_fetch_exa``)."""
+    return tool_name.startswith("mcp_") and "fetch" in tool_name.lower()
+
+
 def external_lookup_signature(tool_name: str, arguments: Any) -> str | None:
-    """Stable signature for repeated external lookups we want to throttle."""
+    """Stable signature for repeated external lookups we want to throttle.
+
+    Covers built-in tools (``web_search``, ``web_fetch``) as well as MCP tools
+    whose names contain ``search`` or ``fetch`` (e.g. ``mcp_exa_web_search_exa``).
+    """
     if not isinstance(arguments, dict):
         return None
     arguments = cast(dict[str, Any], arguments)
-    if tool_name == "web_fetch":
-        url = str(arguments.get("url") or "").strip()
-        if url:
-            return f"web_fetch:{url.lower()}"
-    if tool_name == "web_search":
-        query = str(arguments.get("query") or arguments.get("search_term") or "").strip()
-        if query:
-            return f"web_search:{query.lower()}"
+
+    # --- fetch-style tools -------------------------------------------------
+    if tool_name == "web_fetch" or _is_mcp_fetch_tool(tool_name):
+        for key in _FETCH_URL_KEYS:
+            url = str(arguments.get(key) or "").strip()
+            if url:
+                return f"web_fetch:{url.lower()}"
+
+    # --- search-style tools ------------------------------------------------
+    if tool_name == "web_search" or _is_mcp_search_tool(tool_name):
+        for key in _SEARCH_QUERY_KEYS:
+            query = str(arguments.get(key) or "").strip()
+            if query:
+                return f"web_search:{query.lower()}"
+
     return None
 
 

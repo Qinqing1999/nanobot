@@ -492,3 +492,96 @@ async def test_runner_blocks_repeated_external_fetches():
         if msg.get("role") == "tool" and msg.get("tool_call_id") == "call_3"
     ][0]
     assert "repeated external lookup blocked" in blocked_tool_message["content"]
+
+
+@pytest.mark.asyncio
+async def test_runner_blocks_repeated_mcp_search_calls():
+    """MCP search tools (e.g. mcp_exa_web_search_exa) should be throttled
+    the same way as the built-in web_search tool."""
+    provider = MagicMock()
+    captured_final_call: list[dict] = []
+    call_count = {"n": 0}
+
+    async def chat_with_retry(*, messages, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] <= 3:
+            return LLMResponse(
+                content="working",
+                tool_calls=[ToolCallRequest(
+                    id=f"call_{call_count['n']}",
+                    name="mcp_exa_web_search_exa",
+                    arguments={"query": "水豚噜噜 噜妹 情侣 高清", "numResults": 10},
+                )],
+                usage={},
+            )
+        captured_final_call[:] = messages
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="search results")
+
+    runner = AgentRunner()
+    result = await runner.run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "find capybara wallpapers"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=4,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == "done"
+    # First two calls execute; third is blocked by the throttle.
+    assert tools.execute.await_count == 2
+    blocked_tool_message = [
+        msg for msg in captured_final_call
+        if msg.get("role") == "tool" and msg.get("tool_call_id") == "call_3"
+    ][0]
+    assert "repeated external lookup blocked" in blocked_tool_message["content"]
+
+
+@pytest.mark.asyncio
+async def test_runner_blocks_repeated_mcp_fetch_calls():
+    """MCP fetch tools (e.g. mcp_exa_web_fetch_exa) should be throttled
+    the same way as the built-in web_fetch tool."""
+    provider = MagicMock()
+    captured_final_call: list[dict] = []
+    call_count = {"n": 0}
+
+    async def chat_with_retry(*, messages, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] <= 3:
+            return LLMResponse(
+                content="working",
+                tool_calls=[ToolCallRequest(
+                    id=f"call_{call_count['n']}",
+                    name="mcp_exa_web_fetch_exa",
+                    arguments={"url": "https://example.com/page"},
+                )],
+                usage={},
+            )
+        captured_final_call[:] = messages
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="page content")
+
+    runner = AgentRunner()
+    result = await runner.run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "read the page"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=4,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == "done"
+    assert tools.execute.await_count == 2
+    blocked_tool_message = [
+        msg for msg in captured_final_call
+        if msg.get("role") == "tool" and msg.get("tool_call_id") == "call_3"
+    ][0]
+    assert "repeated external lookup blocked" in blocked_tool_message["content"]
