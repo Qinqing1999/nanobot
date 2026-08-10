@@ -70,8 +70,8 @@ def _resolve_provider_setup(
             display_name=(p.display_name or "") if p else "",
             thinking_style=(p.thinking_style or "") if p else "",
         )
-    if spec and spec.is_transcription_only:
-        raise ValueError(f"Provider '{provider_name}' only supports transcription.")
+    if spec and spec.is_service_only:
+        raise ValueError(f"Provider '{provider_name}' is a service-only provider and cannot serve chat completions.")
     backend = spec.backend if spec else "openai_compat"
     if p and p.proxy and backend not in {"openai_compat", "openai_codex", "xai_grok"}:
         raise ValueError(

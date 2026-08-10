@@ -1624,7 +1624,7 @@ def _get_quick_start_provider_info() -> dict[str, _QuickStartProviderInfo]:
     for spec in PROVIDERS:
         if (
             spec.name == "custom"
-            or spec.is_transcription_only
+            or spec.is_service_only
             or (spec.is_oauth and spec.name not in _QUICK_START_OAUTH_PROVIDERS)
         ):
             continue

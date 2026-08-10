@@ -277,6 +277,7 @@ class AgentLoop:
         tools_config: ToolsConfig | None = None,
         image_generation_provider_config: ProviderConfig | None = None,
         image_generation_provider_configs: dict[str, ProviderConfig] | None = None,
+        provider_configs: dict[str, ProviderConfig] | None = None,
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None,
         provider_signature: tuple[object, ...] | None = None,
         model_presets: dict[str, ModelPresetConfig] | None = None,
@@ -353,6 +354,7 @@ class AgentLoop:
         self.web_config = _tc.web
         self.exec_config = _tc.exec
         self._image_generation_provider_configs = dict(image_generation_provider_configs or {})
+        self._provider_configs = dict(provider_configs or {})
         if (
             image_generation_provider_config is not None
             and "openrouter" not in self._image_generation_provider_configs
@@ -478,6 +480,9 @@ class AgentLoop:
         model = extra.pop("model", None) or resolved.model
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
+        provider_configs = extra.pop("provider_configs", None) or {
+            "birefnet": config.providers.birefnet,
+        }
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
             provider_snapshot_loader,
@@ -510,6 +515,7 @@ class AgentLoop:
             dream_model_preset=defaults.dream.model_override,
             restart_mode=config.gateway.restart_mode,
             provider_snapshot_loader=provider_snapshot_loader,
+            provider_configs=provider_configs,
             preset_snapshot_loader=preset_snapshot_loader,
             **extra,
         )
@@ -618,6 +624,7 @@ class AgentLoop:
             sessions=self.sessions,
             provider_snapshot_loader=provider_snapshot_loader,
             image_generation_provider_configs=self._image_generation_provider_configs,
+            provider_configs=self._provider_configs,
             schedule_background=self.schedule_background,
             timezone=self.context.timezone or "UTC",
             workspace_sandbox=self.workspace_scopes.sandbox_status,

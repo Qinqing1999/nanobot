@@ -76,8 +76,10 @@ class ProviderSpec:
     # Direct providers skip API-key validation (user supplies everything)
     is_direct: bool = False
 
-    # Provider is listed for shared credentials but cannot serve chat completions.
-    is_transcription_only: bool = False
+    # Provider is listed for shared credentials but cannot serve chat completions
+    # (e.g. transcription, image segmentation).  Appears in Settings so users can
+    # configure API keys / base URLs, but is excluded from chat model selection.
+    is_service_only: bool = False
 
     # Provider supports cache_control on content blocks (e.g. Anthropic prompt caching)
     supports_prompt_caching: bool = False
@@ -757,7 +759,21 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="AssemblyAI",
         backend="openai_compat",
         default_api_base="https://api.assemblyai.com/v2",
-        is_transcription_only=True,
+        is_service_only=True,
+    ),
+    # BiRefNet: subject segmentation microservice (Docker, port 8001).
+    # Not a chat provider — configured via providers.birefnet.apiBase so that
+    # segment_subject / apply_mask tools can call the service.  Auto-enables
+    # the tools when apiBase is set.
+    ProviderSpec(
+        name="birefnet",
+        keywords=(),
+        env_key="",
+        display_name="BiRefNet",
+        backend="openai_compat",
+        default_api_base="http://localhost:8001",
+        is_direct=True,
+        is_service_only=True,
     ),
     # Qianfan (百度千帆): OpenAI-compatible API
     ProviderSpec(

@@ -305,6 +305,7 @@ class ProvidersConfig(Base):
     opencode: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Zen (canonical provider id)
     opencode_zen: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Zen (curated coding models)
     opencode_go: ProviderConfig = Field(default_factory=ProviderConfig)  # OpenCode Go (low-cost coding models)
+    birefnet: ProviderConfig = Field(default_factory=ProviderConfig)  # BiRefNet subject segmentation microservice
 
     @model_validator(mode="after")
     def convert_extra_providers(self):
@@ -538,7 +539,7 @@ class Config(BaseSettings):
 
         # Explicit provider prefix wins — prevents `github-copilot/...codex` matching openai_codex.
         for spec in PROVIDERS:
-            if spec.is_transcription_only:
+            if spec.is_service_only:
                 continue
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
@@ -556,7 +557,7 @@ class Config(BaseSettings):
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
-            if spec.is_transcription_only:
+            if spec.is_service_only:
                 continue
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
@@ -601,7 +602,7 @@ class Config(BaseSettings):
         # Fallback: gateways first, then others (follows registry order)
         # OAuth providers are NOT valid fallbacks — they require explicit model selection
         for spec in PROVIDERS:
-            if spec.is_oauth or spec.is_transcription_only:
+            if spec.is_oauth or spec.is_service_only:
                 continue
             p = getattr(self.providers, spec.name, None)
             if p and p.api_key:

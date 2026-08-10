@@ -40,7 +40,7 @@ Useful `ProviderSpec` options:
 | `detect_by_base_keyword` | Match configured gateways by API base URL. |
 | `strip_model_prefix` | Strip `provider/` before sending the model to the upstream API. |
 | `supports_max_completion_tokens` | Use `max_completion_tokens` instead of `max_tokens`. |
-| `is_transcription_only` | Provider has credentials but cannot serve chat completions. |
+| `is_service_only` | Provider has credentials but cannot serve chat completions (e.g. transcription, segmentation). |
 
 ## Adding a Transcription Provider
 
@@ -61,7 +61,7 @@ class ProvidersConfig(BaseModel):
 
 2. Add a `ProviderSpec` in `nanobot/providers/registry.py`.
 
-For transcription-only providers, set `is_transcription_only=True` so they show up in credential/settings surfaces but stay out of chat model selection.
+For service-only providers (transcription, segmentation, etc.), set `is_service_only=True` so they show up in credential/settings surfaces but stay out of chat model selection.
 
 ```python
 ProviderSpec(
@@ -70,7 +70,7 @@ ProviderSpec(
     env_key="MY_STT_API_KEY",
     display_name="My STT",
     default_api_base="https://api.example.com/v1",
-    is_transcription_only=True,
+    is_service_only=True,
 )
 ```
 

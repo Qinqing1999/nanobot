@@ -51,3 +51,21 @@ services:
     command: ["status"]
     stdin_open: true
     tty: true
+
+  birefnet:
+    build: ./birefnet-service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s

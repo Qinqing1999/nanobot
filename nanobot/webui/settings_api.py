@@ -612,7 +612,7 @@ def _provider_settings_row(
         "api_key_hint": _mask_secret_hint(provider_config.api_key),
         "api_base": provider_config.api_base,
         "default_api_base": spec.default_api_base or None,
-        "model_selectable": not spec.is_transcription_only,
+        "model_selectable": not spec.is_service_only,
         "model_catalog": _model_catalog_kind(spec),
         "advanced_fields": _provider_advanced_field_names(name, spec),
         "extra_headers": _redact_provider_secret_values(provider_config.extra_headers),
@@ -668,7 +668,7 @@ def _model_catalog_kind(spec: Any) -> str:
     catalog = getattr(spec, "model_catalog", "auto")
     if catalog != "auto":
         return catalog
-    if spec.is_transcription_only or spec.is_oauth:
+    if spec.is_service_only or spec.is_oauth:
         return "unsupported"
     if spec.backend != "openai_compat" and spec.name != "minimax_anthropic":
         return "unsupported"
@@ -1016,7 +1016,7 @@ def _validate_configured_provider(config: Config, provider: str) -> None:
     if resolved_provider is None:
         raise WebUISettingsError("unknown provider")
     spec, _, provider_config = resolved_provider
-    if spec.is_transcription_only:
+    if spec.is_service_only:
         raise WebUISettingsError("provider does not support chat models")
     if not _provider_configured_for_settings(spec, provider_config):
         raise WebUISettingsError("provider is not configured")

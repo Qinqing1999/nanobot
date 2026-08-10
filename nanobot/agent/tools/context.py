@@ -88,6 +88,7 @@ class ToolContext:
     file_state_store: FileStates | None = None
     provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None
     image_generation_provider_configs: dict[str, ProviderConfig] | None = None
+    provider_configs: dict[str, ProviderConfig] | None = None
     schedule_background: Callable[[Coroutine[Any, Any, None]], None] | None = None
     timezone: str = "UTC"
     workspace_sandbox: WorkspaceSandboxStatus | None = None

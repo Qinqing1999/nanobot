@@ -980,7 +980,7 @@ class TestMainMenuUpdate:
         for spec in PROVIDERS:
             if (
                 spec.name == "custom"
-                or spec.is_transcription_only
+                or spec.is_service_only
                 or (
                     spec.is_oauth
                     and spec.name not in onboard_wizard._QUICK_START_OAUTH_PROVIDERS
