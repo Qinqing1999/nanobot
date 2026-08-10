@@ -56,7 +56,7 @@ class ImageGenerationToolConfig(Base):
     default_image_size: str = "1K"
     max_images_per_turn: int = Field(default=4, ge=1, le=8)
     save_dir: str = "generated"
-    segmentation_api_base: str = ""  # BiRefNet segmentation service URL (e.g. http://localhost:8001)
+    segmentation_api_base: str = ""  # Segmentation service URL (e.g. http://localhost:8001)
 
 
 @tool_parameters(

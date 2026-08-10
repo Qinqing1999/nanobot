@@ -1,4 +1,4 @@
-"""Subject segmentation tool — calls BiRefNet to extract a subject mask."""
+"""Subject segmentation tool — calls segmentation service to extract a subject mask."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class SegmentSubjectError(RuntimeError):
     "required": ["image"],
 })
 class SegmentSubjectTool(Tool):
-    """Call BiRefNet segmentation service to extract a subject mask from an image."""
+    """Call segmentation service to extract a subject mask from an image."""
 
     config_key = ""
 
@@ -110,7 +110,7 @@ class SegmentSubjectTool(Tool):
 
         data_url = f"data:{mime};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
 
-        # Call BiRefNet service
+        # Call segmentation service
         try:
             mask_data_url = await self._call_segment_service(data_url)
         except SegmentSubjectError as exc:
@@ -138,7 +138,7 @@ class SegmentSubjectTool(Tool):
         )
 
     async def _call_segment_service(self, image_data_url: str) -> str:
-        """POST to BiRefNet /segment and return the mask data URL."""
+        """POST to segmentation /segment and return the mask data URL."""
         url = f"{self._api_base}/segment"
         headers = {"Content-Type": "application/json"}
         body: dict[str, Any] = {"image": image_data_url}
@@ -149,7 +149,7 @@ class SegmentSubjectTool(Tool):
         except httpx.ConnectError as exc:
             raise SegmentSubjectError(
                 f"无法连接分割服务 {self._api_base}。"
-                "请确认 BiRefNet Docker 容器已启动（docker compose up）。"
+                "请确认分割服务 Docker 容器已启动（docker compose up）。"
             ) from exc
         except httpx.TimeoutException as exc:
             raise SegmentSubjectError(
@@ -185,7 +185,7 @@ class SegmentSubjectTool(Tool):
         return mask_path
 
     async def check_service_health(self) -> bool:
-        """Check if the BiRefNet service is healthy."""
+        """Check if the segmentation service is healthy."""
         url = f"{self._api_base}/health"
         try:
             async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT_S) as client:

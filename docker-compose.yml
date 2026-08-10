@@ -57,15 +57,14 @@ services:
     restart: unless-stopped
     ports:
       - "8001:8001"
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 1G
+    environment:
+      - REMBG_MODEL=u2netp
+      - ORT_THREADS=2
+    mem_limit: 512m
+    memswap_limit: 512m
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 30s

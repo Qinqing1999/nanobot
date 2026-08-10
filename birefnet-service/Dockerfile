@@ -1,15 +1,26 @@
+# ===========================================================================
+# Subject Segmentation Service — Dockerfile (onnxruntime + u2netp, 4.7 MB model)
+#
+# Direct ONNX inference, no rembg/scipy/numba. Runtime memory ~100 MB.
+# Build:  docker build -t birefnet-seg:latest birefnet-service/
+# Run:    docker run -d --name birefnet -p 8001:8001 birefnet-seg:latest
+# ===========================================================================
+
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install runtime Python dependencies (Tsinghua PyPI mirror for speed)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
 
+# Copy pre-downloaded u2netp model (4.7 MB) and application code
+COPY models/u2netp.onnx models/
 COPY app.py .
-COPY models/ models/
 
-ENV MODEL_PATH=models/birefnet.onnx
-# For 2-core server: limit onnxruntime threads to avoid oversubscription
+ENV MODEL_PATH=models/u2netp.onnx
 ENV ORT_THREADS=2
 
 EXPOSE 8001

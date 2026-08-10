@@ -6,6 +6,4 @@ __pycache__
 venv
 .idea
 .vscode
-export_onnx.py
-test_segment.py
 *.md

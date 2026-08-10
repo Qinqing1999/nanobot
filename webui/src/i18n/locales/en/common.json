@@ -267,7 +267,7 @@
       "videoDuration": "Default clip length when the prompt does not specify one.",
       "videoFrameRate": "Frames per second for generated video.",
       "saveDir": "Relative path under media directory, or an absolute system path.",
-"segmentationService": "URL of the BiRefNet segmentation microservice. Leave empty to disable subject segmentation.",
+"segmentationService": "URL of the segmentation microservice. Leave empty to disable subject segmentation.",
       "mediaDir": "Root directory for all media files. Leave empty to use the default (~/.nanobot/media/).",
       "uploadsDir": "Subdirectory under media dir for user uploads, or an absolute path. Leave empty to use media root.",
       "timezone": "Used for schedules and time-aware replies.",

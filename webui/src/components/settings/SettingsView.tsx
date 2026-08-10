@@ -5290,7 +5290,7 @@ function ImageGenerationSettings({
             title={tx("settings.rows.segmentationService", "Segmentation service")}
             description={tx(
               "settings.help.segmentationService",
-              "URL of the BiRefNet segmentation microservice. Leave empty to disable subject segmentation.",
+              "URL of the segmentation microservice. Leave empty to disable subject segmentation.",
             )}
           >
             <Input

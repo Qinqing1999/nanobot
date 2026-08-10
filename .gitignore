@@ -101,3 +101,6 @@ exp/
 .playwright-mcp/
 bridge/node_modules/
 webui/.verify-*
+
+# birefnet-service test artifacts
+birefnet-service/test_*.png

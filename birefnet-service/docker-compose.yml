@@ -1,0 +1,18 @@
+services:
+  birefnet-seg:
+    build: .
+    image: birefnet-seg:latest
+    container_name: birefnet
+    ports:
+      - "8001:8001"
+    environment:
+      - REMBG_MODEL=u2netp
+      - ORT_THREADS=2
+    restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
