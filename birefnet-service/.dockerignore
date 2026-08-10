@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+.venv
+venv
+.idea
+.vscode
+export_onnx.py
+test_segment.py
+*.md

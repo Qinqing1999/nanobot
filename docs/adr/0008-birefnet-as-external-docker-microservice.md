@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by ADR-0010 — the microservice shape (standalone Docker, HTTP API, `providers.birefnet.apiBase`) is retained, but the runtime stack changed from PyTorch BiRefNet to rembg + ONNX Runtime.
 
 ## Context
 

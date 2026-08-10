@@ -480,9 +480,7 @@ class AgentLoop:
         model = extra.pop("model", None) or resolved.model
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
-        provider_configs = extra.pop("provider_configs", None) or {
-            "birefnet": config.providers.birefnet,
-        }
+        provider_configs = extra.pop("provider_configs", None) or {}
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
             provider_snapshot_loader,

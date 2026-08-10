@@ -599,6 +599,7 @@ export interface SettingsPayload {
     default_image_size: string;
     max_images_per_turn: number;
     save_dir: string;
+    segmentation_api_base: string;
     providers: Array<{
       name: string;
       label: string;
@@ -1128,13 +1129,14 @@ export interface NetworkSafetySettingsUpdate {
 }
 
 export interface ImageGenerationSettingsUpdate {
-enabled: boolean;
-provider: string;
-model: string;
-defaultAspectRatio: string;
-defaultImageSize: string;
-maxImagesPerTurn: number;
-saveDir: string;
+  enabled: boolean;
+  provider: string;
+  model: string;
+  defaultAspectRatio: string;
+  defaultImageSize: string;
+  maxImagesPerTurn: number;
+  saveDir: string;
+  segmentationApiBase: string;
 }
 
 export interface VideoGenerationSettingsUpdate {

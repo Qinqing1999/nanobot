@@ -1,4 +1,4 @@
-"""Tests for the segment_subject tool — BiRefNet HTTP call, mask saving, and error handling."""
+"""Tests for the segment_subject tool — segmentation HTTP call, mask saving, and error handling."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pytest
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.segment_subject import SegmentSubjectTool
-from nanobot.config.schema import ProviderConfig
+from nanobot.config.schema import ToolsConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,33 +60,37 @@ def _make_tool(
     )
 
 
+def _make_config(segmentation_api_base: str = "") -> ToolsConfig:
+    """Create a ToolsConfig with the given segmentation_api_base."""
+    config = ToolsConfig()
+    config.image_generation.segmentation_api_base = segmentation_api_base
+    return config
+
+
 # ---------------------------------------------------------------------------
 # enabled() tests
 # ---------------------------------------------------------------------------
 
-def test_enabled_when_birefnet_configured() -> None:
+def test_enabled_when_segmentation_configured() -> None:
     ctx = ToolContext(
-        config=MagicMock(),
+        config=_make_config("http://localhost:8001"),
         workspace="/tmp",
-        provider_configs={"birefnet": ProviderConfig(api_base="http://localhost:8001")},
     )
     assert SegmentSubjectTool.enabled(ctx) is True
 
 
-def test_disabled_when_birefnet_not_configured() -> None:
+def test_disabled_when_segmentation_not_configured() -> None:
     ctx = ToolContext(
-        config=MagicMock(),
+        config=_make_config(),
         workspace="/tmp",
-        provider_configs=None,
     )
     assert SegmentSubjectTool.enabled(ctx) is False
 
 
-def test_disabled_when_birefnet_api_base_empty() -> None:
+def test_disabled_when_segmentation_api_base_empty() -> None:
     ctx = ToolContext(
-        config=MagicMock(),
+        config=_make_config(""),
         workspace="/tmp",
-        provider_configs={"birefnet": ProviderConfig()},
     )
     assert SegmentSubjectTool.enabled(ctx) is False
 
@@ -123,7 +127,7 @@ async def test_execute_returns_mask_path(tmp_path: Path) -> None:
     result = json.loads(result_str)
     assert "mask_path" in result
     assert Path(result["mask_path"]).is_file()
-    assert result["service"] == "birefnet"
+    assert result["service"] == "segmentation"
     assert "next_step" in result
 
 

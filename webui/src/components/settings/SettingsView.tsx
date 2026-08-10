@@ -610,6 +610,7 @@ const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
   defaultImageSize: "1K",
   maxImagesPerTurn: 4,
   saveDir: "generated",
+  segmentationApiBase: "",
 };
 
 const DEFAULT_VIDEO_GENERATION_FORM: VideoGenerationSettingsUpdate = {
@@ -706,6 +707,7 @@ function imageGenerationFormFromPayload(payload: SettingsPayload): ImageGenerati
     defaultImageSize: payload.image_generation.default_image_size,
     maxImagesPerTurn: payload.image_generation.max_images_per_turn,
     saveDir: payload.image_generation.save_dir,
+    segmentationApiBase: payload.image_generation.segmentation_api_base,
   };
 }
 
@@ -1232,13 +1234,14 @@ export function SettingsView({
   const imageGenerationDirty = useMemo(() => {
     if (!settings) return false;
     return (
-      imageGenerationForm.enabled !== settings.image_generation.enabled ||
-      imageGenerationForm.provider !== settings.image_generation.provider ||
-      imageGenerationForm.model !== settings.image_generation.model ||
-      imageGenerationForm.defaultAspectRatio !== settings.image_generation.default_aspect_ratio ||
-      imageGenerationForm.defaultImageSize !== settings.image_generation.default_image_size ||
-imageGenerationForm.maxImagesPerTurn !== settings.image_generation.max_images_per_turn ||
-imageGenerationForm.saveDir !== settings.image_generation.save_dir
+    imageGenerationForm.enabled !== settings.image_generation.enabled ||
+    imageGenerationForm.provider !== settings.image_generation.provider ||
+    imageGenerationForm.model !== settings.image_generation.model ||
+    imageGenerationForm.defaultAspectRatio !== settings.image_generation.default_aspect_ratio ||
+    imageGenerationForm.defaultImageSize !== settings.image_generation.default_image_size ||
+    imageGenerationForm.maxImagesPerTurn !== settings.image_generation.max_images_per_turn ||
+    imageGenerationForm.saveDir !== settings.image_generation.save_dir ||
+    imageGenerationForm.segmentationApiBase !== settings.image_generation.segmentation_api_base
 );
   }, [imageGenerationForm, settings]);
 
@@ -5271,6 +5274,36 @@ function ImageGenerationSettings({
                 ? tx("settings.image.missingCredential", "Configure this provider before enabling image generation.")
                 : undefined
             }
+            dirtyMessage={tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")}
+            pendingMessage={tx("settings.status.savedRestartApply", "Saved. Restart when ready.")}
+            onSave={onSave}
+            onRestart={onRestart}
+            isRestarting={isRestarting}
+          />
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>{tx("settings.sections.segmentation", "Subject segmentation")}</SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.rows.segmentationService", "Segmentation service")}
+            description={tx(
+              "settings.help.segmentationService",
+              "URL of the BiRefNet segmentation microservice. Leave empty to disable subject segmentation.",
+            )}
+          >
+            <Input
+              value={form.segmentationApiBase}
+              onChange={(e) => onChangeForm((prev) => ({ ...prev, segmentationApiBase: e.target.value }))}
+              placeholder="http://localhost:8001"
+              className="h-9 w-[280px] max-w-full rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <RestartSettingsFooter
+            dirty={dirty}
+            saving={saving}
+            pendingRestart={requiresRestartPending}
             dirtyMessage={tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")}
             pendingMessage={tx("settings.status.savedRestartApply", "Saved. Restart when ready.")}
             onSave={onSave}

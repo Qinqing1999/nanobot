@@ -1130,6 +1130,7 @@ export async function updateImageGenerationSettings(
   query.set("default_image_size", update.defaultImageSize);
   query.set("max_images_per_turn", String(update.maxImagesPerTurn));
   query.set("save_dir", update.saveDir);
+  query.set("segmentation_api_base", update.segmentationApiBase);
   return request<SettingsPayload>(
     `${base}/api/settings/image-generation/update?${query}`,
     token,

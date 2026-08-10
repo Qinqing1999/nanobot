@@ -52,19 +52,16 @@ class SegmentSubjectTool(Tool):
 
     @classmethod
     def enabled(cls, ctx: ToolContext) -> bool:
-        """Enable when providers.birefnet.apiBase is configured."""
-        configs = ctx.provider_configs or {}
-        pc = configs.get("birefnet")
-        return pc is not None and bool(getattr(pc, "api_base", None))
+        """Enable when tools.image_generation.segmentation_api_base is configured."""
+        api_base = getattr(ctx.config.image_generation, "segmentation_api_base", "")
+        return bool(api_base)
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
-        configs = ctx.provider_configs or {}
-        pc = configs.get("birefnet")
-        api_base = getattr(pc, "api_base", None) if pc else None
+        api_base = getattr(ctx.config.image_generation, "segmentation_api_base", "") or "http://localhost:8001"
         return cls(
             workspace=ctx.workspace,
-            api_base=api_base or "http://localhost:8001",
+            api_base=api_base,
             sessions=ctx.sessions,
         )
 
@@ -131,7 +128,7 @@ class SegmentSubjectTool(Tool):
         return json.dumps(
             {
                 "mask_path": str(mask_path),
-                "service": "birefnet",
+                "service": "segmentation",
                 "next_step": (
                     "使用 apply_mask 工具，将 image 参数设为原图路径或制品 ID，"
                     "mask 参数设为此 mask_path，生成纯白背景的干净主体图。"

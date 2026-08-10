@@ -1333,19 +1333,20 @@ def settings_payload(
             ),
             "base_url": os.environ.get("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com",
         },
-        "image_generation": {
-            "enabled": image_config.enabled,
-            "provider": image_config.provider,
-            "provider_configured": bool(
-                selected_image_provider and selected_image_provider["configured"]
-            ),
-            "model": image_config.model,
-            "default_aspect_ratio": image_config.default_aspect_ratio,
-            "default_image_size": image_config.default_image_size,
-            "max_images_per_turn": image_config.max_images_per_turn,
-            "save_dir": image_config.save_dir,
-            "providers": image_providers,
-        },
+    "image_generation": {
+        "enabled": image_config.enabled,
+        "provider": image_config.provider,
+        "provider_configured": bool(
+            selected_image_provider and selected_image_provider["configured"]
+        ),
+        "model": image_config.model,
+        "default_aspect_ratio": image_config.default_aspect_ratio,
+        "default_image_size": image_config.default_image_size,
+        "max_images_per_turn": image_config.max_images_per_turn,
+        "save_dir": image_config.save_dir,
+        "segmentation_api_base": image_config.segmentation_api_base,
+        "providers": image_providers,
+    },
         "video_generation": _video_generation_payload(config),
         "transcription": {
             "enabled": transcription.enabled,
@@ -2379,6 +2380,19 @@ def update_image_generation_settings(query: QueryParams) -> dict[str, Any]:
             raise WebUISettingsError("save_dir is too long")
         if image_config.save_dir != save_dir:
             image_config.save_dir = save_dir
+            changed = True
+
+    segmentation_api_base = _query_first_alias(
+        query,
+        "segmentation_api_base",
+        "segmentationApiBase",
+    )
+    if segmentation_api_base is not None:
+        segmentation_api_base = segmentation_api_base.strip()
+        if len(segmentation_api_base) > 512:
+            raise WebUISettingsError("segmentation_api_base is too long")
+        if image_config.segmentation_api_base != segmentation_api_base:
+            image_config.segmentation_api_base = segmentation_api_base
             changed = True
 
     if changed:

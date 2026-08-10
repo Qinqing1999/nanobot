@@ -87,8 +87,8 @@ _Avoid_: 合并模式、混合模式
 ## 主体分割
 
 **分割服务 (Segmentation Service)**:
-独立部署的 BiRefNet ONNX 微服务（Docker 容器），通过 HTTP API（`POST /segment`）提供主体分割能力。nanobot 通过 `providers.birefnet.apiBase` 配置其地址，用户自行管理容器生命周期。
-_Avoid_: 分割器、抠图服务
+独立部署的主体分割微服务（Docker 容器），通过 HTTP API（`POST /segment`）提供主体分割能力。基于 rembg + ONNX Runtime，默认使用 ISNet 通用模型，可处理人物、物品、动物、动漫等任意主体类型。无需分类器或专用模型。nanobot 通过 `tools.image_generation.segmentation_api_base` 配置其地址，用户自行管理容器生命周期。配置入口位于 WebUI「图像设置」页面的「主体分割」区域。
+_Avoid_: 分割器、抠图服务、BiRefNet 服务（已不再特指 BiRefNet 模型）
 
 **主体分割 (Subject Segmentation)**:
 从图片中自动识别主要主体（人物/物品/动物等）并生成像素级蒙版的过程。由 `segment_subject` 工具调用分割服务完成。输入图片支持制品 ID 和文件路径，输出蒙版保存为临时文件。

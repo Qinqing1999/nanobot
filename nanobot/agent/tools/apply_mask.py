@@ -141,7 +141,7 @@ class ApplyMaskTool(Tool):
             model="apply_mask",
             source_images=[str(image_path)],
             save_dir="generated",
-            provider="birefnet",
+            provider="segmentation",
         )
 
         # 7. Register in session Artifact Registry
