@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +13,6 @@ from loguru import logger
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.image_utils import ImageInputError, resolve_image_input, resolve_mask_path
 from nanobot.utils.artifacts import (
-    generated_image_tool_result,
     store_generated_image_artifact,
 )
 
@@ -92,7 +92,9 @@ class ApplyMaskTool(Tool):
             "输入原图路径或制品 ID，以及 segment_subject 返回的蒙版路径。\n"
             "输出自动注册为图片制品并发送给用户（含制品 ID 通知），无需额外调用 message 工具。\n"
             "典型工作流：segment_subject（生成主体蒙版）→ apply_mask（主体提取）。\n"
-            "通常在 segment_subject 之后调用，用于提取图片主体并去除背景干扰。"
+            "通常在 segment_subject 之后调用，用于提取图片主体并去除背景干扰。\n"
+            "IMPORTANT: 不要因为用户上传了图片就调用此工具。"
+            "仅在用户明确要求提取主体/去背景/抠图时才使用。"
         )
 
     async def execute(
@@ -156,7 +158,19 @@ class ApplyMaskTool(Tool):
 
         logger.info("Mask applied: artifact {} saved", artifact.get("id", "unknown"))
 
-        return generated_image_tool_result([artifact])
+        # Return result with custom next_step: image is already auto-delivered,
+        # so agent should NOT call the message tool again.
+        return json.dumps(
+            {
+                "artifacts": [artifact],
+                "next_step": (
+                    "图片已自动发送给用户，不要再次调用 message 工具发送。"
+                    "制品 ID 已在通知中告知用户。"
+                    "直接回复用户提取完成即可。"
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     def _apply_mask(
         self,

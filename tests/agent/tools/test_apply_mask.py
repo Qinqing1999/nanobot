@@ -144,6 +144,10 @@ async def test_auto_deliver_image_with_notification(tmp_path):
     result = json.loads(result_str)
     assert "artifacts" in result
     artifact_path = result["artifacts"][0]["path"]
+    # Verify next_step says image is already delivered (not "call message")
+    next_step = result.get("next_step", "")
+    assert "已自动发送" in next_step
+    assert "不要" in next_step and "message" in next_step
 
     # Verify bus.publish_outbound was called with media containing the image path
     bus.publish_outbound.assert_awaited_once()

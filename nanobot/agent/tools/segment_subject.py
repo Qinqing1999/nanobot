@@ -91,7 +91,9 @@ class SegmentSubjectTool(Tool):
             "蒙版为临时文件，需配合 apply_mask 工具（主体提取）使用以生成干净主体图。\n"
             "典型工作流：segment_subject（生成主体蒙版）→ apply_mask（主体提取）。\n"
             "仅在需要提取图片主体时调用此工具。"
-            "如果用户只想生成图片，使用 generate_image 工具即可，无需先生成蒙版。"
+            "如果用户只想生成图片，使用 generate_image 工具即可，无需先生成蒙版。\n"
+            "IMPORTANT: 不要因为用户上传了图片就调用此工具。"
+            "仅在用户明确要求提取主体/去背景/抠图时才使用。"
         )
 
     async def execute(self, image: str, **kwargs: Any) -> str:
