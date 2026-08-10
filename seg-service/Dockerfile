@@ -2,8 +2,8 @@
 # Subject Segmentation Service — Dockerfile (onnxruntime + u2netp, 4.7 MB model)
 #
 # Direct ONNX inference, no rembg/scipy/numba. Runtime memory ~100 MB.
-# Build:  docker build -t birefnet-seg:latest birefnet-service/
-# Run:    docker run -d --name birefnet -p 8001:8001 birefnet-seg:latest
+# Build:  docker build -t seg-service:latest seg-service/
+# Run:    docker run -d --name seg-service -p 8001:8001 seg-service:latest
 # ===========================================================================
 
 FROM python:3.11-slim

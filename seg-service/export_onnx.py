@@ -96,7 +96,7 @@ def export(model_id: str, output_path: str, opset: int = 17):
     except ImportError:
         print("onnxruntime not installed — skipping sanity check.")
 
-    print(f"\nDone. Copy {output_file} into birefnet-service/models/ for Docker deployment.")
+    print(f"\nDone. Copy {output_file} into seg-service/models/ for Docker deployment.")
 
 
 if __name__ == "__main__":

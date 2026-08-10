@@ -1,12 +1,11 @@
 services:
-  birefnet-seg:
+  seg-service:
     build: .
-    image: birefnet-seg:latest
-    container_name: birefnet
+    image: seg-service:latest
+    container_name: seg-service
     ports:
       - "8001:8001"
     environment:
-      - REMBG_MODEL=u2netp
       - ORT_THREADS=2
     restart: unless-stopped
     mem_limit: 512m

@@ -102,5 +102,5 @@ exp/
 bridge/node_modules/
 webui/.verify-*
 
-# birefnet-service test artifacts
-birefnet-service/test_*.png
+# seg-service test artifacts
+seg-service/test_*.png

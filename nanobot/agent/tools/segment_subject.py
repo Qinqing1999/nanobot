@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 _SEGMENT_TIMEOUT_S = 60.0
 _HEALTH_TIMEOUT_S = 5.0
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB — reject images larger than this
 
 
 class SegmentSubjectError(RuntimeError):
@@ -40,6 +41,7 @@ class SegmentSubjectError(RuntimeError):
                 "要提取主体的图片路径或制品 ID。"
                 "支持工作区内文件路径、nanobot media 目录路径、"
                 "或四位数字制品 ID（如 '1021'）。"
+                "图片格式支持 PNG / JPEG / WEBP。"
             ),
         },
     },
@@ -83,10 +85,11 @@ class SegmentSubjectTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "从图片中自动识别主体（人物、物品、动物等）并生成分割蒙版。"
-            "输入图片路径或制品 ID，返回蒙版文件路径。"
-            "蒙版是黑白 PNG：白色标记主体区域，黑色标记背景区域。"
-            "蒙版为临时文件，需配合 apply_mask 工具使用以生成干净主体图。"
+            "从图片中自动识别主体（人物、物品、动物等）并生成分割蒙版。\n"
+            "输入图片路径或制品 ID，返回蒙版文件路径。\n"
+            "蒙版是黑白 PNG：白色标记主体区域，黑色标记背景区域。\n"
+            "蒙版为临时文件，需配合 apply_mask 工具使用以生成干净主体图。\n"
+            "典型工作流：segment_subject（生成分割蒙版）→ apply_mask（裁剪主体）。\n"
             "仅在需要提取图片主体时调用此工具。"
             "如果用户只想生成图片，使用 generate_image 工具即可，无需先提取主体。"
         )
@@ -103,12 +106,30 @@ class SegmentSubjectTool(Tool):
         except OSError as exc:
             return ToolResult.error(f"无法读取图片文件: {exc}")
 
+        # Size guard: reject oversized images
+        if len(raw_bytes) > _MAX_IMAGE_BYTES:
+            return ToolResult.error(
+                f"图片文件过大（{len(raw_bytes) / 1024 / 1024:.1f} MB），"
+                f"超过 {_MAX_IMAGE_BYTES / 1024 / 1024:.0f} MB 上限。"
+                "请先缩小图片或使用较小分辨率的图片。"
+            )
+
         from nanobot.utils.helpers import detect_image_mime
         mime = detect_image_mime(raw_bytes)
         if mime is None:
             return ToolResult.error(f"不支持的图片格式: {image}")
 
         data_url = f"data:{mime};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
+
+        # Get image dimensions for the return value
+        image_dimensions = None
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(raw_bytes))
+            image_dimensions = f"{img.size[0]}x{img.size[1]}"
+        except Exception:
+            pass
 
         # Call segmentation service
         try:
@@ -125,17 +146,19 @@ class SegmentSubjectTool(Tool):
 
         logger.info("Subject segmentation complete: mask saved to {}", mask_path)
 
-        return json.dumps(
-            {
-                "mask_path": str(mask_path),
-                "service": "segmentation",
-                "next_step": (
-                    "使用 apply_mask 工具，将 image 参数设为原图路径或制品 ID，"
-                    "mask 参数设为此 mask_path，生成纯白背景的干净主体图。"
-                ),
-            },
-            ensure_ascii=False,
-        )
+        result: dict[str, Any] = {
+            "mask_path": str(mask_path),
+            "original_image": str(image_path),
+            "service": "segmentation",
+            "next_step": (
+                "使用 apply_mask 工具，将 image 参数设为原图路径或制品 ID，"
+                "mask 参数设为此 mask_path，生成纯白背景的干净主体图。"
+            ),
+        }
+        if image_dimensions:
+            result["image_dimensions"] = image_dimensions
+
+        return json.dumps(result, ensure_ascii=False)
 
     async def _call_segment_service(self, image_data_url: str) -> str:
         """POST to segmentation /segment and return the mask data URL."""

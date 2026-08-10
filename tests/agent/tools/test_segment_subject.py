@@ -101,7 +101,7 @@ def test_disabled_when_segmentation_api_base_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_returns_mask_path(tmp_path: Path) -> None:
-    """Tool calls BiRefNet, saves mask, returns mask_path in JSON."""
+    """Tool calls segmentation service, saves mask, returns mask_path in JSON."""
     image_bytes = _make_png(4, 4)
     image_path = tmp_path / "input.png"
     image_path.write_bytes(image_bytes)
@@ -133,7 +133,7 @@ async def test_execute_returns_mask_path(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_error_service_unavailable(tmp_path: Path) -> None:
-    """Tool returns error when BiRefNet service is unreachable."""
+    """Tool returns error when segmentation service is unreachable."""
     image_bytes = _make_png(4, 4)
     image_path = tmp_path / "input.png"
     image_path.write_bytes(image_bytes)
@@ -156,7 +156,7 @@ async def test_execute_error_service_unavailable(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_execute_error_timeout(tmp_path: Path) -> None:
-    """Tool returns error when BiRefNet service times out."""
+    """Tool returns error when segmentation service times out."""
     image_bytes = _make_png(4, 4)
     image_path = tmp_path / "input.png"
     image_path.write_bytes(image_bytes)

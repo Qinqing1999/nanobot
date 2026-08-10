@@ -52,13 +52,12 @@ services:
     stdin_open: true
     tty: true
 
-  birefnet:
-    build: ./birefnet-service
+  seg-service:
+    build: ./seg-service
     restart: unless-stopped
     ports:
       - "8001:8001"
     environment:
-      - REMBG_MODEL=u2netp
       - ORT_THREADS=2
     mem_limit: 512m
     memswap_limit: 512m

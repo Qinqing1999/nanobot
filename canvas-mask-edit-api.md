@@ -250,7 +250,7 @@ POST {上游API地址}/images/generations
 ```
 用户："帮我生成这个人的三视图"
     ↓
-① 自动分割微服务（BiRefNet ONNX）
+① 自动分割微服务（u2netp ONNX）
    输入：原图 base64
    输出：像素级主体形状蒙版（黑白 PNG base64）
     ↓
@@ -265,7 +265,7 @@ POST {上游API地址}/images/generations
 ```
 
 ```
-原图                    BiRefNet 蒙版              裁剪后的主体              三视图结果
+原图                    分割蒙版                  裁剪后的主体              三视图结果
 ┌──────────┐          ┌──────────┐            ┌──────────┐            ┌────┬────┬────┐
 │          │          │██████████│            │          │            │正面│侧面│背面│
 │ 人物+背景 │   →      │██░░░░░░██│    →       │  纯主体   │    →      │全身│全身│全身│
@@ -283,13 +283,13 @@ POST {上游API地址}/images/generations
 
 分割服务作为独立容器运行，主后端通过 HTTP 调用，内存完全隔离。
 
-**技术栈：** ONNX Runtime + BiRefNet INT8 量化模型
+**技术栈：** ONNX Runtime + u2netp 模型
 
 **资源占用：**
 
 | 项目 | 数据 |
 |------|------|
-| 模型 | BiRefNet INT8 量化版（~30 MB） |
+| 模型 | u2netp (ONNX, 4.7 MB) |
 | 容器内存 | ~150-200 MB（模型 + 推理） |
 | CPU 推理速度 | 0.5-1 秒/张（512×512 输入） |
 | 真人精度 | ⭐⭐⭐⭐⭐ |
@@ -381,8 +381,8 @@ numpy==1.26.4
 version: "3.8"
 
 services:
-  birefnet:
-    build: ./birefnet-service
+  seg-service:
+    build: ./seg-service
     ports:
       - "8001:8001"
     deploy:
@@ -402,7 +402,7 @@ services:
 **主后端调用方式（HTTP）：**
 
 ```
-主后端 → POST http://birefnet:8001/segment
+主后端 → POST http://seg-service:8001/segment
          请求体: { "image": "data:image/png;base64,xxxx" }
          响应: { "mask": "data:image/png;base64,xxxx" }
 ```
@@ -480,7 +480,7 @@ services:
 
 | 手段 | 作用 | 实现方式 |
 |------|------|---------|
-| **干净参考图** | 去掉背景干扰，AI 聚焦主体 | BiRefNet 自动分割 + 裁剪 |
+| **干净参考图** | 去掉背景干扰，AI 聚焦主体 | 自动分割 + 裁剪 |
 | **相同 seed** | 相同随机种子 → 相似生成路径 | 3 次生成使用相同 seed 值 |
 | **negative prompt** | 防止风格漂移/面部变化 | `"deformed, disfigured, face swap, clothing change, hair color change"` |
 | **结构化 prompt** | 注入主体外观描述减少歧义 | 在 prompt 中包含发色、服装、体型等描述 |
@@ -513,7 +513,7 @@ services:
 
 ### 分割微服务
 
-- [ ] Docker 容器：Python + ONNX Runtime + BiRefNet INT8 模型
+- [ ] Docker 容器：Python + ONNX Runtime + u2netp 模型
 - [ ] `POST /segment` 接口：输入原图 base64 → 输出蒙版 base64
 - [ ] `GET /health` 健康检查接口
 - [ ] 内存限制 512M，CPU 推理无需 GPU

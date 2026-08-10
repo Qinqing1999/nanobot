@@ -32,7 +32,8 @@ class ApplyMaskError(RuntimeError):
         "image": {
             "type": "string",
             "description": (
-                "原图路径或制品 ID。支持工作区内文件路径、media 目录路径、"
+                "原图路径或制品 ID。"
+                "支持工作区内文件路径、media 目录路径、"
                 "或四位数字制品 ID。"
             ),
         },
@@ -41,6 +42,7 @@ class ApplyMaskError(RuntimeError):
             "description": (
                 "蒙版文件路径（由 segment_subject 工具返回的 mask_path）。"
                 "黑白 PNG：白色=保留区域，黑色=替换为背景的区域。"
+                "如果蒙版尺寸与原图不同，将自动缩放到原图尺寸。"
             ),
         },
         "background": {
@@ -85,10 +87,11 @@ class ApplyMaskTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "用蒙版裁剪原图，生成干净的主体图。"
-            "蒙版白色区域保留原图像素，黑色区域替换为纯白背景。"
-            "输入原图路径或制品 ID，以及 segment_subject 返回的蒙版路径。"
-            "输出注册为图片制品，可获得制品 ID 用于后续引用。"
+            "用蒙版裁剪原图，生成干净的主体图。\n"
+            "蒙版白色区域保留原图像素，黑色区域替换为指定背景色。\n"
+            "输入原图路径或制品 ID，以及 segment_subject 返回的蒙版路径。\n"
+            "输出注册为图片制品，可获得制品 ID 用于后续引用。\n"
+            "典型工作流：segment_subject（生成分割蒙版）→ apply_mask（裁剪主体）。\n"
             "通常在 segment_subject 之后调用，用于提取图片主体并去除背景干扰。"
         )
 
@@ -168,11 +171,14 @@ class ApplyMaskTool(Tool):
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
 
-        # Validate dimensions match
+        # Auto-resize mask to match image dimensions if they differ
         if mask_img.size != img.size:
-            raise ApplyMaskError(
-                f"蒙版尺寸 {mask_img.size} 与原图尺寸 {img.size} 不一致"
+            logger.info(
+                "Auto-resizing mask from {} to {} to match image",
+                mask_img.size,
+                img.size,
             )
+            mask_img = mask_img.resize(img.size, Image.BILINEAR)
 
         if background == "transparent":
             # Transparent background: attach mask as alpha channel

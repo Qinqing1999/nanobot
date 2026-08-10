@@ -97,36 +97,35 @@ mask_url = result["mask"]  # data:image/png;base64,...
 
 ```bash
 # 构建
-docker build -t birefnet-seg:latest birefnet-service/
+docker build -t seg-service:latest seg-service/
 
 # 运行(带 512MB 内存限制)
 docker run -d \
-  --name birefnet \
+  --name seg-service \
   -p 8001:8001 \
   --restart unless-stopped \
   --memory=512m \
   --memory-swap=512m \
-  birefnet-seg:latest
+  seg-service:latest
 ```
 
 ### 方式二:docker compose(独立)
 
 ```bash
-cd birefnet-service
+cd seg-service
 docker compose up -d
 ```
 
 `docker-compose.yml` 配置:
 ```yaml
 services:
-  birefnet-seg:
+  seg-service:
     build: .
-    image: birefnet-seg:latest
-    container_name: birefnet
+    image: seg-service:latest
+    container_name: seg-service
     ports:
       - "8001:8001"
     environment:
-      - REMBG_MODEL=u2netp
       - ORT_THREADS=2
     restart: unless-stopped
     mem_limit: 512m
@@ -142,10 +141,10 @@ services:
 
 在项目根目录:
 ```bash
-docker compose up -d birefnet
+docker compose up -d seg-service
 ```
 
-根 `docker-compose.yml` 中的 birefnet 服务定义了同样的内存限制和健康检查。
+根 `docker-compose.yml` 中的 seg-service 服务定义了同样的内存限制和健康检查。
 
 ### 内存限制说明
 
@@ -171,7 +170,7 @@ docker compose up -d birefnet
 ## 文件结构
 
 ```
-birefnet-service/
+seg-service/
 ├── app.py              # FastAPI 应用(主入口)
 ├── Dockerfile          # 容器构建文件
 ├── docker-compose.yml  # 独立部署配置
@@ -232,10 +231,10 @@ nanobot 通过 `segment_subject` 工具调用此服务。工具链流程:
 
 ```bash
 # 基础 API 测试(使用合成图片)
-python birefnet-service/test_api.py
+python seg-service/test_api.py
 
 # 真实图片测试
-python birefnet-service/test_image.py /path/to/image.png
+python seg-service/test_image.py /path/to/image.png
 ```
 
 测试脚本会在 `/tmp/seg_result/` 下保存原图、蒙版和裁剪结果用于对比。
