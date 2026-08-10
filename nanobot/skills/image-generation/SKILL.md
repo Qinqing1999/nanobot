@@ -8,6 +8,8 @@ Use the `generate_image` tool when the user asks you to create, render, draw, de
 
 **IMPORTANT**: If the user wants a **video**, **animation**, or **motion clip** (mentions "视频", "动画", duration like 3s/5s), use `generate_video` instead. See video-generation skill for details.
 
+**IMPORTANT**: If the user wants to **extract a subject** from an image, **remove background**, or **segment** an image (mentions "提取主体", "去背景", "抠图", "分离主体"), see the **subject-extraction** skill instead. Do not use `generate_image` for subject extraction unless the user explicitly chooses the "AI 生成" mode after being asked.
+
 If the `generate_image` tool is not available in the current tool list, tell the user that image generation is not enabled for this nanobot instance.
 
 ## When To Use

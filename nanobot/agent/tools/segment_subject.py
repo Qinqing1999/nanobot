@@ -85,13 +85,13 @@ class SegmentSubjectTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "从图片中自动识别主体（人物、物品、动物等）并生成分割蒙版。\n"
+            "生成主体蒙版——从图片中自动识别主体（人物、物品、动物等）并生成分割蒙版。\n"
             "输入图片路径或制品 ID，返回蒙版文件路径。\n"
             "蒙版是黑白 PNG：白色标记主体区域，黑色标记背景区域。\n"
-            "蒙版为临时文件，需配合 apply_mask 工具使用以生成干净主体图。\n"
-            "典型工作流：segment_subject（生成分割蒙版）→ apply_mask（裁剪主体）。\n"
+            "蒙版为临时文件，需配合 apply_mask 工具（主体提取）使用以生成干净主体图。\n"
+            "典型工作流：segment_subject（生成主体蒙版）→ apply_mask（主体提取）。\n"
             "仅在需要提取图片主体时调用此工具。"
-            "如果用户只想生成图片，使用 generate_image 工具即可，无需先提取主体。"
+            "如果用户只想生成图片，使用 generate_image 工具即可，无需先生成蒙版。"
         )
 
     async def execute(self, image: str, **kwargs: Any) -> str:

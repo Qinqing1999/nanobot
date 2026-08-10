@@ -87,11 +87,11 @@ class ApplyMaskTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "用蒙版裁剪原图，生成干净的主体图。\n"
+            "主体提取——用蒙版从原图中提取主体并替换背景为纯白色。\n"
             "蒙版白色区域保留原图像素，黑色区域替换为指定背景色。\n"
             "输入原图路径或制品 ID，以及 segment_subject 返回的蒙版路径。\n"
-            "输出注册为图片制品，可获得制品 ID 用于后续引用。\n"
-            "典型工作流：segment_subject（生成分割蒙版）→ apply_mask（裁剪主体）。\n"
+            "输出自动注册为图片制品并发送给用户（含制品 ID 通知），无需额外调用 message 工具。\n"
+            "典型工作流：segment_subject（生成主体蒙版）→ apply_mask（主体提取）。\n"
             "通常在 segment_subject 之后调用，用于提取图片主体并去除背景干扰。"
         )
 
@@ -223,7 +223,13 @@ class ApplyMaskTool(Tool):
             logger.debug("Failed to register image artifact in session registry")
 
     async def _push_artifact_notification(self, artifact: dict[str, Any]) -> None:
-        """Push artifact notification to the user via MessageBus."""
+        """Push artifact notification with the image file to the user via MessageBus.
+
+        Sends a single OutboundMessage containing both the text notification
+        (artifact ID, type, filename) and the actual image file as a media
+        attachment, so the user receives the extracted subject image directly
+        without the agent needing to call the message tool separately.
+        """
         from nanobot.agent.tools.context import current_request_context
         from nanobot.bus.events import OutboundMessage
         from nanobot.utils.artifact_registry import format_artifact_notification
@@ -232,16 +238,22 @@ class ApplyMaskTool(Tool):
         if ctx is None:
             return
 
+        artifact_id = artifact.get("artifact_id", "")
+        artifact_path = artifact.get("path", "")
         notification_artifacts = [
             {
-                "id": artifact.get("artifact_id", ""),
+                "id": artifact_id,
                 "type": "image",
-                "filename": Path(artifact.get("path", "")).name,
+                "filename": Path(artifact_path).name,
             }
         ]
         notification = format_artifact_notification(notification_artifacts)
+        # Send both the text notification and the image file itself.
+        # The channel layer handles media delivery (e.g. WeChat uploads to CDN).
+        media = [artifact_path] if artifact_path else []
         await self._bus.publish_outbound(OutboundMessage(
             channel=ctx.channel,
             chat_id=ctx.chat_id,
             content=notification,
+            media=media,
         ))

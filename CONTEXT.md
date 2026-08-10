@@ -2,6 +2,16 @@
 
 nanobot 的媒体（图片、视频、文件）生成、存储、引用和交付系统涉及的领域概念和统一术语。
 
+## 助手身份
+
+**助手身份 (Agent Identity)**:
+助手在系统提示词中呈现给 LLM 的自我认知和人格名称。由 `SOUL.md` 模板定义第一人称身份（如 "I am Sage 🦉"），由 `agent/identity.md` 模板定义工作区所有权引用（如 "Sage's agent workspace"）。与 CLI 显示名（`bot_name` 配置）和包名（`nanobot` CLI 命令）不同——前者是人格自我认知，后两者是技术标识。
+_Avoid_: 助手名字（太泛）、品牌名（指产品名，不是人格名）
+
+**CLI 显示名 (CLI Display Name)**:
+`config.agents.defaults.bot_name` 配置字段，控制 CLI 终端中 spinner 和回复头部的显示文本（如 "Sage is thinking..."）。默认值为 "Sage"，用户可通过 config.json 覆盖。与助手身份不同——CLI 显示名是 UI 层面的，助手身份是 LLM 系统提示词层面的。
+_Avoid_: 助手身份（指 LLM 人格，不是 UI 文本）
+
 ## 语言
 
 **制品 (Artifact)**:
@@ -45,8 +55,16 @@ _Avoid_: 日志、调试输出
 _Avoid_: ID 查找、文件定位
 
 **会话切换 (Session Switching)**:
-用户通过 `/sessions` 和 `/switch` 命令在同一 channel 内查看、新建和切换不同会话的能力。通过 `session_key_override` 实现。
+用户通过 `/sessions` 和 `/switch` 命令在同一 channel 内查看、新建和切换不同会话的能力。切换时更新会话索引追踪器，后续消息自动路由到新会话。
 _Avoid_: 多租户、频道切换
+
+**会话索引 (Session Index)**:
+同一 `base_key`（`channel:chat_id`）下多会话的数字编号，附加在 session key 末尾作为 `:N` 后缀（如 `weixin:xxx:2`）。索引 0 表示默认会话（无后缀）。`/new` 创建下一个可用索引，`/switch <N>` 切换到指定索引。
+_Avoid_: 会话编号（太泛）、会话 ID（与 session key 混淆）
+
+**会话索引追踪器 (Session Index Tracker)**:
+`AgentLoop._session_indices` 字典，记录每个 `base_key` 当前活跃的会话索引。`_effective_session_key` 在路由消息时查询此字典以决定目标 session key。内存态，通过 `session_indices.json` 持久化以在重启后恢复。
+_Avoid_: 会话映射表、会话路由表
 
 ## 限速与配额
 
@@ -84,24 +102,24 @@ _Avoid_: 参考帧、定格帧
 当 `reference_images` 和 `keyframe_images` 同时传入时，`reference_images` 优先，忽略 `keyframe_images`。`mode` 参数始终由图片参数自动推断，显式传入的 `mode` 被覆盖。
 _Avoid_: 合并模式、混合模式
 
-## 主体分割
+## 主体提取
 
 **分割服务 (Segmentation Service)**:
 独立部署的主体分割微服务（Docker 容器），通过 HTTP API（`POST /segment`）提供主体分割能力。基于 ONNX Runtime + u2netp 模型，可处理人物、物品、动物等任意主体类型。nanobot 通过 `tools.image_generation.segmentation_api_base` 配置其地址，用户自行管理容器生命周期。配置入口位于 WebUI「图像设置」页面的「主体分割」区域。
 _Avoid_: 分割器、抠图服务
 
-**主体分割 (Subject Segmentation)**:
-从图片中自动识别主要主体（人物/物品/动物等）并生成像素级蒙版的过程。由 `segment_subject` 工具调用分割服务完成。输入图片支持制品 ID 和文件路径，输出蒙版保存为临时文件。
-_Avoid_: 抠图（Matting，指Alpha Matting 算法）、图像分割（Image Segmentation，泛指所有分割任务）
+**生成主体蒙版 (Generate Subject Mask)**:
+从图片中自动识别主要主体（人物/物品/动物等）并生成像素级蒙版的过程。由 `segment_subject` 工具调用分割服务完成。输入图片支持制品 ID 和文件路径，输出蒙版保存为临时文件。这是主体提取流程的第一步。
+_Avoid_: 主体分割（Subject Segmentation，ML 术语，用户不直觉）、抠图（Matting，指Alpha Matting 算法）、图像分割（Image Segmentation，泛指所有分割任务）
 
 **蒙版 (Mask)**:
 黑白 PNG 图片，与原图尺寸完全一致。白色（RGB 255,255,255）标记主体区域，黑色（RGB 0,0,0）标记背景区域。作为临时文件存储在 media/masks/ 目录下，不注册为制品，不向用户展示。工具间通过文件路径传递。
 _Avoid_: 遮罩（Mask 的泛称）、Alpha 通道（指透明度通道，不是二值蒙版）
 
-**主体裁剪 (Subject Crop)**:
-用蒙版从原图中提取主体并替换背景为纯白色的操作。由 `apply_mask` 工具执行。蒙版白色区域保留原图像素，黑色区域填充纯白。输出注册为图片制品，可被后续工具（如 `generate_image`）引用。
-_Avoid_: 抠图换底、背景移除（Background Removal，指仅去除背景不填充）
+**主体提取 (Subject Extraction)**:
+用蒙版从原图中提取主体并替换背景为纯白色的操作。由 `apply_mask` 工具执行。蒙版白色区域保留原图像素，黑色区域填充纯白。输出注册为图片制品，可被后续工具（如 `generate_image`）引用。这是主体提取流程的第二步（在生成主体蒙版之后）。
+_Avoid_: 主体裁剪（Subject Crop，暗示矩形裁切而非像素级合成）、抠图换底、背景移除（Background Removal，指仅去除背景不填充）
 
 **干净参考图 (Clean Reference Image)**:
-主体裁剪的输出——背景为纯白的主体图。用作后续 image2image 生成的参考图，去掉背景干扰后 AI 生成的一致性显著提升。
+主体提取的输出——背景为纯白的主体图。用作后续 image2image 生成的参考图，去掉背景干扰后 AI 生成的一致性显著提升。
 _Avoid_: 透明底图、去背景图
