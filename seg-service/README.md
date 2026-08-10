@@ -1,16 +1,16 @@
 # Subject Segmentation Service
 
-图片主体分割微服务,基于 ONNX Runtime + u2net 模型(~176 MB),适合服务器部署。
+图片主体分割微服务,基于 ONNX Runtime + silueta 模型(~43 MB),适合低内存服务器部署。
 
 ## 架构概览
 
 | 项目 | 规格 |
 |------|------|
-| 模型 | u2net (ONNX, ~176 MB) |
+| 模型 | silueta (ONNX, ~43 MB) |
 | 输入尺寸 | 320×320 |
 | 推理后端 | ONNX Runtime (CPUExecutionProvider) |
-| 运行时内存 | ~300 MB 空闲, ~500 MB 推理峰值 |
-| 容器内存限制 | 1 GB (硬限制,防止 OOM 拖垮宿主机) |
+| 运行时内存 | ~150 MB 空闲, ~300 MB 推理峰值 |
+| 容器内存限制 | 512 MB (硬限制,防止 OOM 拖垮宿主机) |
 | 框架 | FastAPI + Uvicorn |
 | 端口 | 8001 |
 
@@ -89,7 +89,7 @@ mask_url = result["mask"]  # data:image/png;base64,...
 
 ### 大图保护机制
 
-当输入图片最大边超过 `MAX_DIMENSION`(默认 1024px)时,服务会自动等比缩小后再推理,防止低内存服务器 OOM。返回的蒙版尺寸对应缩小后的图片尺寸。
+当输入图片最大边超过 `MAX_DIMENSION`(默认 512px)时,服务会自动等比缩小后再推理,防止低内存服务器 OOM。返回的蒙版尺寸对应缩小后的图片尺寸。
 
 ## Docker 部署
 
@@ -99,13 +99,13 @@ mask_url = result["mask"]  # data:image/png;base64,...
 # 构建
 docker build -t seg-service:latest seg-service/
 
-# 运行(带 1GB 内存限制)
+# 运行(带 512MB 内存限制)
 docker run -d \
   --name seg-service \
   -p 8001:8001 \
   --restart unless-stopped \
-  --memory=1g \
-  --memory-swap=1g \
+  --memory=512m \
+  --memory-swap=512m \
   seg-service:latest
 ```
 
@@ -126,10 +126,11 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - ORT_THREADS=2
+      - ORT_THREADS=1
+      - MAX_DIMENSION=512
     restart: unless-stopped
-    mem_limit: 1g
-    memswap_limit: 1g
+    mem_limit: 512m
+    memswap_limit: 512m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
@@ -152,8 +153,8 @@ docker compose up -d seg-service
 
 | 参数 | 值 | 作用 |
 |------|-----|------|
-| `mem_limit` | 1g | 容器可用内存上限 |
-| `memswap_limit` | 1g | 不允许使用 swap(设为与 mem_limit 相同) |
+| `mem_limit` | 512m | 容器可用内存上限 |
+| `memswap_limit` | 512m | 不允许使用 swap(设为与 mem_limit 相同) |
 
 当容器超出内存限制时,Docker 会 kill 容器进程(而非宿主机进程),容器随后自动重启。
 
@@ -161,11 +162,11 @@ docker compose up -d seg-service
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MODEL_PATH` | `models/u2net.onnx` | ONNX 模型文件路径 |
+| `MODEL_PATH` | `models/silueta.onnx` | ONNX 模型文件路径 |
 | `MODEL_DIR` | `models` | 模型目录(当 MODEL_PATH 未设置时使用) |
-| `ORT_THREADS` | `2` | ONNX Runtime 推理线程数 |
+| `ORT_THREADS` | `1` | ONNX Runtime 推理线程数 |
 | `PORT` | `8001` | 服务监听端口 |
-| `MAX_DIMENSION` | `1024` | 输入图片最大边,超过则自动缩小 |
+| `MAX_DIMENSION` | `512` | 输入图片最大边,超过则自动缩小 |
 
 ## 文件结构
 
@@ -177,7 +178,7 @@ seg-service/
 ├── requirements.txt    # Python 依赖
 ├── .dockerignore       # Docker 构建排除项
 ├── models/
-│   └── u2net.onnx      # 预下载的 ONNX 模型 (~176 MB)
+│   └── silueta.onnx    # 预下载的 ONNX 模型 (~43 MB)
 ├── test_api.py         # API 基础测试(合成图片)
 └── test_image.py       # 真实图片分割测试
 ```

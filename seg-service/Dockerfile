@@ -1,7 +1,7 @@
 # ===========================================================================
-# Subject Segmentation Service — Dockerfile (onnxruntime + u2net, ~176 MB model)
+# Subject Segmentation Service — Dockerfile (onnxruntime + silueta, ~43 MB model)
 #
-# Direct ONNX inference, no rembg/scipy/numba. Runtime memory ~300-400 MB.
+# Direct ONNX inference, no rembg/scipy/numba. Runtime memory ~200-300 MB.
 # Build:  docker build -t seg-service:latest seg-service/
 # Run:    docker run -d --name seg-service -p 8001:8001 seg-service:latest
 # ===========================================================================
@@ -16,11 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
     --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     --trusted-host pypi.tuna.tsinghua.edu.cn
 
-# Copy pre-downloaded u2net model (~176 MB) and application code
-COPY models/u2net.onnx models/
+# Copy pre-downloaded silueta model (~43 MB) and application code
+COPY models/silueta.onnx models/
 COPY app.py .
 
-ENV MODEL_PATH=models/u2net.onnx
+ENV MODEL_PATH=models/silueta.onnx
 ENV ORT_THREADS=1
 ENV MAX_DIMENSION=512
 

@@ -25,7 +25,8 @@ if TYPE_CHECKING:
 
 _SEGMENT_TIMEOUT_S = 60.0
 _HEALTH_TIMEOUT_S = 5.0
-_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB — reject images larger than this
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB — auto-resize images larger than this
+_MAX_IMAGE_DIMENSION = 2000  # max pixels on longest side before auto-resize
 
 
 class SegmentSubjectError(RuntimeError):
@@ -108,30 +109,52 @@ class SegmentSubjectTool(Tool):
         except OSError as exc:
             return ToolResult.error(f"无法读取图片文件: {exc}")
 
-        # Size guard: reject oversized images
-        if len(raw_bytes) > _MAX_IMAGE_BYTES:
-            return ToolResult.error(
-                f"图片文件过大（{len(raw_bytes) / 1024 / 1024:.1f} MB），"
-                f"超过 {_MAX_IMAGE_BYTES / 1024 / 1024:.0f} MB 上限。"
-                "请先缩小图片或使用较小分辨率的图片。"
-            )
-
         from nanobot.utils.helpers import detect_image_mime
+        import io
+
         mime = detect_image_mime(raw_bytes)
         if mime is None:
             return ToolResult.error(f"不支持的图片格式: {image}")
 
-        data_url = f"data:{mime};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
-
-        # Get image dimensions for the return value
+        # Get image dimensions and auto-resize if too large
         image_dimensions = None
         try:
             from PIL import Image
-            import io
             img = Image.open(io.BytesIO(raw_bytes))
-            image_dimensions = f"{img.size[0]}x{img.size[1]}"
+            orig_w, orig_h = img.size
+            image_dimensions = f"{orig_w}x{orig_h}"
+
+            needs_resize = (
+                len(raw_bytes) > _MAX_IMAGE_BYTES
+                or max(orig_w, orig_h) > _MAX_IMAGE_DIMENSION
+            )
+
+            if needs_resize:
+                # Auto-resize: scale down proportionally to fit within limits
+                scale = min(
+                    _MAX_IMAGE_DIMENSION / max(orig_w, orig_h),
+                    (_MAX_IMAGE_BYTES / len(raw_bytes)) ** 0.5,  # approx file-size scaling
+                )
+                scale = max(scale, 0.1)  # don't scale below 10%
+                new_w = int(orig_w * scale)
+                new_h = int(orig_h * scale)
+                img = img.convert("RGB")
+                img.thumbnail((new_w, new_h), Image.LANCZOS)
+                buf = io.BytesIO()
+                # Re-encode as JPEG to reduce size (quality 85 is visually lossless)
+                img.save(buf, format="JPEG", quality=85, optimize=True)
+                raw_bytes = buf.getvalue()
+                mime = "image/jpeg"
+                logger.info(
+                    "Auto-resized image for segmentation: "
+                    f"{orig_w}x{orig_h} -> {img.size[0]}x{img.size[1]}, "
+                    f"{len(raw_bytes) / 1024 / 1024:.1f} MB"
+                )
+                image_dimensions = f"{img.size[0]}x{img.size[1]} (resized from {orig_w}x{orig_h})"
         except Exception:
             pass
+
+        data_url = f"data:{mime};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
 
         # Call segmentation service
         try:
