@@ -58,9 +58,10 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - ORT_THREADS=2
-    mem_limit: 512m
-    memswap_limit: 512m
+      - ORT_THREADS=1
+      - MAX_DIMENSION=512
+    mem_limit: 768m
+    memswap_limit: 768m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s

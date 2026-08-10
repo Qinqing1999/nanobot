@@ -1,11 +1,11 @@
-"""Subject segmentation microservice (ONNX Runtime + u2netp).
+"""Subject segmentation microservice (ONNX Runtime + u2net).
 
 Provides:
   POST /segment  — input: {"image": "data:image/...;base64,..."} → output: {"mask": "data:image/png;base64,..."}
   GET  /health   — returns {"status": "ok"}
 
-Uses ONNX Runtime directly with u2netp model (4.7 MB, 320×320 input).
-No rembg / scipy / numba — just onnxruntime. Runtime memory ~100 MB.
+Uses ONNX Runtime directly with u2net model (~176 MB, 320×320 input).
+No rembg / scipy / numba — just onnxruntime. Runtime memory ~300-400 MB.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 
 MODEL_DIR = Path(os.environ.get("MODEL_DIR", "models"))
-MODEL_PATH = Path(os.environ.get("MODEL_PATH", str(MODEL_DIR / "u2netp.onnx")))
-INPUT_SIZE = (320, 320)  # u2netp input size
-MAX_DIMENSION = 1024  # resize images larger than this to prevent OOM
+MODEL_PATH = Path(os.environ.get("MODEL_PATH", str(MODEL_DIR / "u2net.onnx")))
+INPUT_SIZE = (320, 320)  # u2net input size
+MAX_DIMENSION = int(os.environ.get("MAX_DIMENSION", "512"))  # resize large images to prevent OOM on low-memory servers
 
 # ImageNet normalization
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(3, 1, 1)
@@ -47,8 +47,11 @@ def _load_model():
     if not MODEL_PATH.exists():
         raise FileNotFoundError(f"ONNX model not found: {MODEL_PATH}")
     opts = ort.SessionOptions()
-    opts.intra_op_num_threads = int(os.environ.get("ORT_THREADS", "0")) or None
+    opts.intra_op_num_threads = int(os.environ.get("ORT_THREADS", "1")) or None
+    opts.inter_op_num_threads = 1
     opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    # Use basic optimization to reduce memory footprint
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
     print(f"Loading ONNX model: {MODEL_PATH} ...")
     _session = ort.InferenceSession(
         str(MODEL_PATH), sess_options=opts, providers=["CPUExecutionProvider"],

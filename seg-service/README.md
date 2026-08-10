@@ -1,16 +1,16 @@
 # Subject Segmentation Service
 
-轻量级图片主体分割微服务,基于 ONNX Runtime + u2netp 模型(4.7 MB),适合低内存服务器部署。
+图片主体分割微服务,基于 ONNX Runtime + u2net 模型(~176 MB),适合服务器部署。
 
 ## 架构概览
 
 | 项目 | 规格 |
 |------|------|
-| 模型 | u2netp (ONNX, 4.7 MB) |
+| 模型 | u2net (ONNX, ~176 MB) |
 | 输入尺寸 | 320×320 |
 | 推理后端 | ONNX Runtime (CPUExecutionProvider) |
-| 运行时内存 | ~100 MB 空闲, ~300 MB 推理峰值 |
-| 容器内存限制 | 512 MB (硬限制,防止 OOM 拖垮宿主机) |
+| 运行时内存 | ~300 MB 空闲, ~500 MB 推理峰值 |
+| 容器内存限制 | 1 GB (硬限制,防止 OOM 拖垮宿主机) |
 | 框架 | FastAPI + Uvicorn |
 | 端口 | 8001 |
 
@@ -99,13 +99,13 @@ mask_url = result["mask"]  # data:image/png;base64,...
 # 构建
 docker build -t seg-service:latest seg-service/
 
-# 运行(带 512MB 内存限制)
+# 运行(带 1GB 内存限制)
 docker run -d \
   --name seg-service \
   -p 8001:8001 \
   --restart unless-stopped \
-  --memory=512m \
-  --memory-swap=512m \
+  --memory=1g \
+  --memory-swap=1g \
   seg-service:latest
 ```
 
@@ -128,8 +128,8 @@ services:
     environment:
       - ORT_THREADS=2
     restart: unless-stopped
-    mem_limit: 512m
-    memswap_limit: 512m
+    mem_limit: 1g
+    memswap_limit: 1g
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
@@ -148,12 +148,12 @@ docker compose up -d seg-service
 
 ### 内存限制说明
 
-在 1.6 GB RAM 的低内存服务器上,**必须**设置容器内存限制。否则推理时内存飙升会触发系统级 OOM,导致服务器崩溃重启。当前配置:
+在低内存服务器上,**必须**设置容器内存限制。否则推理时内存飙升会触发系统级 OOM,导致服务器崩溃重启。当前配置:
 
 | 参数 | 值 | 作用 |
 |------|-----|------|
-| `mem_limit` | 512m | 容器可用内存上限 |
-| `memswap_limit` | 512m | 不允许使用 swap(设为与 mem_limit 相同) |
+| `mem_limit` | 1g | 容器可用内存上限 |
+| `memswap_limit` | 1g | 不允许使用 swap(设为与 mem_limit 相同) |
 
 当容器超出内存限制时,Docker 会 kill 容器进程(而非宿主机进程),容器随后自动重启。
 
@@ -161,7 +161,7 @@ docker compose up -d seg-service
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MODEL_PATH` | `models/u2netp.onnx` | ONNX 模型文件路径 |
+| `MODEL_PATH` | `models/u2net.onnx` | ONNX 模型文件路径 |
 | `MODEL_DIR` | `models` | 模型目录(当 MODEL_PATH 未设置时使用) |
 | `ORT_THREADS` | `2` | ONNX Runtime 推理线程数 |
 | `PORT` | `8001` | 服务监听端口 |
@@ -177,7 +177,7 @@ seg-service/
 ├── requirements.txt    # Python 依赖
 ├── .dockerignore       # Docker 构建排除项
 ├── models/
-│   └── u2netp.onnx     # 预下载的 ONNX 模型 (4.7 MB)
+│   └── u2net.onnx      # 预下载的 ONNX 模型 (~176 MB)
 ├── test_api.py         # API 基础测试(合成图片)
 └── test_image.py       # 真实图片分割测试
 ```

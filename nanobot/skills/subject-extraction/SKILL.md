@@ -42,18 +42,32 @@ description: 提取图片主体并去除背景。仅在用户明确说"提取主
 
 ### 步骤 1：生成主体蒙版
 
+**优先使用工具调用**：
 ```
 segment_subject(image="原图路径或制品ID")
 ```
 
+**如果工具调用失败**（如"Server disconnected"），使用 API 直接调用：
+
+```bash
+# 1. 读取图片并转 base64
+IMAGE_BASE64=$(base64 -w0 /path/to/image.jpg)
+
+# 2. 调用分割接口
+curl -X POST http://localhost:8001/segment \
+  -H "Content-Type: application/json" \
+  -d "{\"image\": \"data:image/jpeg;base64,${IMAGE_BASE64}\"}"
+```
+
 - 输入：原图路径或四位制品 ID
-- 输出：蒙版文件路径（`mask_path`）和下一步指引
+- 输出：`{"mask": "data:image/png;base64,..."}`
 - 蒙版是黑白 PNG，白色=主体区域，黑色=背景区域
+- 将 base64 解码保存为蒙版文件：`echo "<base64>" | base64 -d > mask.png`
 
 ### 步骤 2：主体提取
 
 ```
-apply_mask(image="原图路径或制品ID", mask="上一步返回的mask_path")
+apply_mask(image="原图路径或制品ID", mask="上一步保存的蒙版路径")
 ```
 
 - 输入：原图 + 蒙版路径
