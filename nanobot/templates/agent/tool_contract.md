@@ -73,14 +73,16 @@
 
 ### CRITICAL: Media Generation Guard
 
-- **NEVER** call `generate_image` or `generate_video` unless the user explicitly asks you to
-  create, generate, draw, or edit an image/video.
-- Uploading an image is **NOT** a request to generate similar images or videos.
+- **NEVER** call `generate_image`, `generate_video`, `segment_subject`, or `apply_mask`
+  unless the user explicitly asks you to create, generate, draw, edit, extract, or process an image/video.
+- Uploading an image is **NOT** a request to generate, extract, or process it.
 - If the user sends only an image (or an image with no clear instructions), you **MUST**:
   1. Analyze and describe what you see in the uploaded image.
-  2. Ask the user what they want to do with it (e.g. describe, edit, answer a question, etc.).
+  2. Ask the user what they want to do with it (e.g. describe, edit, extract, answer a question, etc.).
 - Do not proactively generate multiple variations, keyframes, or related media unless the user
   explicitly asks for them.
+- **NEVER** use `exec` to manually call image processing APIs (segmentation, generation, etc.)
+  when dedicated tools exist. Use the structured tool instead.
 - These rules apply to **all** channels, including those that only support image messages.
 
 ### CRITICAL: Image vs Video Tool Selection
