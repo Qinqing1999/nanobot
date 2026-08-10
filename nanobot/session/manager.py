@@ -1220,3 +1220,22 @@ class SessionManager:
 
     def list_sessions(self) -> list[dict[str, Any]]:
         return cast(list[dict[str, Any]], self._store.list_sessions())
+
+    def highest_existing_index(self, base_key: str) -> int:
+        """Return the highest session index that exists on disk for *base_key*.
+
+        Scans ``list_sessions()`` and parses each key with ``parse_session_key``
+        to find sessions belonging to *base_key* with a non-zero index.
+        Returns 0 if no indexed sessions exist.
+        """
+        from nanobot.session.keys import parse_session_key, session_base_key
+
+        highest = 0
+        for info in self.list_sessions():
+            key = info.get("key", "")
+            if session_base_key(key) != base_key:
+                continue
+            _, _, index = parse_session_key(key)
+            if index > highest:
+                highest = index
+        return highest

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
+import json
 import os
 import time
 import weakref
@@ -403,7 +404,7 @@ class AgentLoop:
         self._background_tasks: set[asyncio.Task[Any]] = set()
         # Per-chat session index tracker for multi-session support.
         # Keyed by base session key (channel:chat_id) → current session index.
-        self._session_indices: dict[str, int] = {}
+        self._session_indices: dict[str, int] = self._load_session_indices()
         self._close_mcp_lock = asyncio.Lock()
         self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
@@ -816,6 +817,42 @@ class AgentLoop:
         sub_cancelled = await self.subagents.cancel_by_session(key)
         return cancelled + sub_cancelled
 
+    def _load_session_indices(self) -> dict[str, int]:
+        """Load persisted session index tracker from disk.
+
+        Returns an empty dict if the file does not exist or is corrupt.
+        """
+        path = self.sessions.sessions_dir / "session_indices.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return {}
+            result: dict[str, int] = {}
+            for key, value in data.items():
+                if isinstance(key, str) and isinstance(value, int) and value > 0:
+                    result[key] = value
+            return result
+        except Exception:
+            logger.warning("Failed to load session_indices.json, starting empty")
+            return {}
+
+    def _flush_session_indices(self) -> None:
+        """Persist the current session index tracker to disk.
+
+        Writes ``session_indices.json`` in the sessions directory.
+        Errors are logged but never raised — this is best-effort persistence.
+        """
+        path = self.sessions.sessions_dir / "session_indices.json"
+        try:
+            path.write_text(
+                json.dumps(self._session_indices),
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.warning("Failed to flush session_indices.json", exc_info=True)
+
     def _effective_session_key(self, msg: InboundMessage) -> str:
         """Return the session key used for task routing and mid-turn injections."""
         if self._unified_session and not msg.session_key_override:
@@ -829,9 +866,20 @@ class AgentLoop:
         idx = self._session_indices.get(base_key, 0)
         if idx > 0:
             from nanobot.session.keys import session_key_for_channel
-            return session_key_for_channel(
+            key = session_key_for_channel(
                 msg.channel, msg.chat_id, session_index=idx,
             )
+            # Lazy deletion check: if the target session file does not exist,
+            # fall back to the highest existing index for this base_key.
+            if self.sessions.read_session_metadata(key) is None:
+                new_idx = self.sessions.highest_existing_index(base_key)
+                self._session_indices[base_key] = new_idx
+                if new_idx > 0:
+                    return session_key_for_channel(
+                        msg.channel, msg.chat_id, session_index=new_idx,
+                    )
+                return msg.session_key
+            return key
         return msg.session_key
 
     def _remember_unified_session_route(
@@ -1160,6 +1208,7 @@ class AgentLoop:
             self.runtime_for_session,
             active_session_keys=self._pending_queues.keys(),
         )
+        self._flush_session_indices()
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""

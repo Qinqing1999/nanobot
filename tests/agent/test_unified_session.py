@@ -244,7 +244,6 @@ class TestCmdNewUnifiedSession:
         shared.add_message("assistant", "hi there")
         sessions.save(shared)
         assert len(sessions.get_or_create("unified:default").messages) == 2
-        expected_snapshot = list(shared.messages)
 
         # schedule_background is a *sync* method that schedules a coroutine via
         # asyncio.create_task().  Mirror that exactly so the coroutine is consumed
@@ -254,6 +253,7 @@ class TestCmdNewUnifiedSession:
             sessions=sessions,
             consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
             _cancel_active_tasks=AsyncMock(return_value=0),
+            _session_indices={},
             llm_runtime=MagicMock(return_value=MagicMock()),
             schedule_background=lambda coro: asyncio.ensure_future(coro),
         )
@@ -273,16 +273,12 @@ class TestCmdNewUnifiedSession:
 
         result = await cmd_new(ctx)
 
-        assert "New session started" in result.content
-        # Invalidate cache and reload from disk to confirm persistence
+        assert "New conversation started" in result.content
+        # The new cmd_new creates a separate indexed session rather than clearing.
+        # The original unified:default session is untouched.
         sessions.invalidate("unified:default")
         reloaded = sessions.get_or_create("unified:default")
-        assert reloaded.messages == []
-        loop.consolidator.archive.assert_called_once_with(
-            expected_snapshot,
-            runtime=admitted_runtime,
-            session_key="unified:default",
-        )
+        assert len(reloaded.messages) == 2
         loop.llm_runtime.assert_not_called()
 
     @pytest.mark.asyncio
@@ -302,6 +298,7 @@ class TestCmdNewUnifiedSession:
             sessions=sessions,
             consolidator=SimpleNamespace(archive=AsyncMock(return_value=True)),
             _cancel_active_tasks=AsyncMock(return_value=0),
+            _session_indices={},
             runtime_for_session=MagicMock(return_value=MagicMock()),
             schedule_background=lambda coro: asyncio.ensure_future(coro),
         )
@@ -315,7 +312,8 @@ class TestCmdNewUnifiedSession:
 
         sessions.invalidate("unified:default")
         sessions.invalidate("discord:999")
-        assert sessions.get_or_create("unified:default").messages == []
+        # /new creates a new indexed session; existing sessions are untouched.
+        assert len(sessions.get_or_create("unified:default").messages) == 1
         assert len(sessions.get_or_create("discord:999").messages) == 1
 
 
