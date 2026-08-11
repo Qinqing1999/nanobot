@@ -1,0 +1,57 @@
+img: (1046, 1024)
+
+=== FP32 Dynamic (arena=OFF, 2 threads) ===
+
+--- FP32-dyn-1024 (input=1024) ---
+  file: 168.0 MB
+  loaded: 225.2 MB (+183.9)
+  peak: 558.4 MB (+517.1)
+  time: 3923 ms
+  out: [0.0000,1.0000] fg=44.5% range=1.0000 => OK
+  saved: c:\Users\qinqingbiao\onnx\opt2_FP32-dyn-1024.png
+
+--- FP32-dyn-768 (input=768) ---
+  file: 168.0 MB
+  loaded: 231.7 MB (+175.2)
+  peak: 419.2 MB (+362.7)
+  time: 2227 ms
+  out: [0.0000,1.0000] fg=44.5% range=1.0000 => OK
+  saved: c:\Users\qinqingbiao\onnx\opt2_FP32-dyn-768.png
+
+--- FP32-dyn-640 (input=640) ---
+  file: 168.0 MB
+  loaded: 233.2 MB (+177.1)
+  peak: 360.6 MB (+304.5)
+  time: 1562 ms
+  out: [0.0000,1.0000] fg=44.8% range=1.0000 => OK
+  saved: c:\Users\qinqingbiao\onnx\opt2_FP32-dyn-640.png
+
+--- FP32-dyn-512 (input=512) ---
+  file: 168.0 MB
+  loaded: 232.7 MB (+175.8)
+  peak: 317.0 MB (+260.2)
+  time: 820 ms
+  out: [0.8137,1.0000] fg=100.0% range=0.1862 => FAIL
+
+=== FP16 (1024, arena=OFF) ===
+
+--- FP16-1024 (input=1024) ---
+  file: 84.1 MB
+  loaded: 236.8 MB (+180.5)
+  peak: 639.3 MB (+583.1)
+  time: 4075 ms
+  out: [0.0000,1.0000] fg=44.5% range=1.0000 => OK
+  saved: c:\Users\qinqingbiao\onnx\opt2_FP16-1024.png
+
+=== INT8 (1024, arena=OFF) ===
+
+--- INT8-1024 (input=1024) ---
+  file: 42.3 MB
+  loaded: 112.2 MB (+56.3)
+  peak: 769.0 MB (+713.1)
+  time: 6499 ms
+  out: [0.0000,1.0000] fg=44.6% range=1.0000 => OK
+  saved: c:\Users\qinqingbiao\onnx\opt2_INT8-1024.png
+
+=== Summary ===
+Best for 2G/2core: pick the smallest OK option

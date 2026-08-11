@@ -1,0 +1,7 @@
+onnx>=1.17.0
+onnxruntime>=1.23.2
+numpy>=1.24.0
+Pillow>=10.0.0
+psutil>=5.9.0
+huggingface_hub>=0.24.0
+flask>=3.0.0
