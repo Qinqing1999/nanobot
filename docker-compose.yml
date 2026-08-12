@@ -58,20 +58,18 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - ORT_THREADS=1
-      - MAX_DIMENSION=512
-      # To use RMBG-1.4 instead of silueta, uncomment the following lines:
-      # - MODEL_PATH=models/model_dynamic.onnx
-      # - ORT_THREADS=2
-      # - MAX_DIMENSION=1024
-    volumes:
-      # Mount RMBG-1.4 model (uncomment to enable):
-      # - ./seg-service/rmbg14_deploy/models/model_dynamic.onnx:/app/models/model_dynamic.onnx:ro
-    mem_limit: 512m
-    memswap_limit: 512m
+      - MODEL_PATH=models/model_dynamic.onnx
+      - ORT_THREADS=2
+      - MAX_DIMENSION=1024
+      # To use lightweight silueta instead of RMBG-1.4, uncomment the following lines:
+      # - MODEL_PATH=models/silueta.onnx
+      # - ORT_THREADS=1
+      # - MAX_DIMENSION=512
+    mem_limit: 1g
+    memswap_limit: 1g
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s

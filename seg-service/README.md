@@ -1,16 +1,16 @@
 # Subject Segmentation Service
 
-图片主体分割微服务,基于 ONNX Runtime + silueta 模型(~43 MB),适合低内存服务器部署。
+图片主体分割微服务,基于 ONNX Runtime + RMBG-1.4 模型(model_dynamic.onnx, ~169 MB),提供高精度分割效果。也支持轻量级 silueta 模型(~43 MB)作为备选。
 
 ## 架构概览
 
 | 项目 | 规格 |
 |------|------|
-| 模型 | silueta (ONNX, ~43 MB) |
-| 输入尺寸 | 320×320 |
+| 默认模型 | RMBG-1.4 (model_dynamic.onnx, ONNX, ~169 MB) |
+| 输入尺寸 | 640×640 (RMBG-1.4) / 320×320 (silueta) |
 | 推理后端 | ONNX Runtime (CPUExecutionProvider) |
-| 运行时内存 | ~150 MB 空闲, ~300 MB 推理峰值 |
-| 容器内存限制 | 512 MB (硬限制,防止 OOM 拖垮宿主机) |
+| 运行时内存 | ~200 MB 空闲, ~400 MB 推理峰值 (RMBG-1.4) |
+| 容器内存限制 | 1 GB (硬限制,防止 OOM 拖垮宿主机) |
 | 框架 | FastAPI + Uvicorn |
 | 端口 | 8001 |
 
@@ -126,7 +126,7 @@ transparent_png_url = result["result"]  # data:image/png;base64,...
 
 ### 大图保护机制
 
-当输入图片最大边超过 `MAX_DIMENSION`(默认 512px)时,服务会自动等比缩小后再推理,防止低内存服务器 OOM。返回的蒙版尺寸对应缩小后的图片尺寸。
+当输入图片最大边超过 `MAX_DIMENSION`(默认 1024px)时,服务会自动等比缩小后再推理,防止低内存服务器 OOM。返回的蒙版尺寸对应缩小后的图片尺寸。
 
 ## Docker 部署
 
@@ -136,13 +136,13 @@ transparent_png_url = result["result"]  # data:image/png;base64,...
 # 构建
 docker build -t seg-service:latest seg-service/
 
-# 运行(带 512MB 内存限制)
+# �行(默认使用 RMBG-1.4 模型,带 1GB 内存限制)
 docker run -d \
   --name seg-service \
   -p 8001:8001 \
   --restart unless-stopped \
-  --memory=512m \
-  --memory-swap=512m \
+  --memory=1g \
+  --memory-swap=1g \
   seg-service:latest
 ```
 
@@ -163,34 +163,31 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - ORT_THREADS=1
-      - MAX_DIMENSION=512
+      - MODEL_PATH=models/model_dynamic.onnx
+      - ORT_THREADS=2
+      - MAX_DIMENSION=1024
     restart: unless-stopped
-    mem_limit: 512m
-    memswap_limit: 512m
+    mem_limit: 1g
+    memswap_limit: 1g
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
       timeout: 10s
-      start_period: 30s
+      start_period: 60s
 ```
 
-### 使用 RMBG-1.4 模型部署
+### 使用轻量级 silueta 模型部署
 
-如需更高精度的 RMBG-1.4 模型,将 `model_dynamic.onnx` 复制到 `models/` 目录并设置环境变量:
+如需在低内存服务器上使用轻量级 silueta 模型(~43 MB, ~300 MB 运行时),设置环境变量:
 
 ```bash
-# 复制模型
-cp rmbg14_deploy/models/model_dynamic.onnx models/
-
-# 运行(RMBG-1.4 需要更多内存和线程)
+# 运行(silueta,低内存模式)
 docker run -d \
-  --name seg-service-rmbg \
+  --name seg-service \
   -p 8001:8001 \
-  -e MODEL_PATH=models/model_dynamic.onnx \
-  -e ORT_THREADS=2 \
-  -e MAX_DIMENSION=1024 \
-  -v $(pwd)/models/model_dynamic.onnx:/app/models/model_dynamic.onnx \
+  -e MODEL_PATH=models/silueta.onnx \
+  -e ORT_THREADS=1 \
+  -e MAX_DIMENSION=512 \
   --restart unless-stopped \
   --memory=512m \
   --memory-swap=512m \
@@ -200,9 +197,9 @@ docker run -d \
 或在 docker-compose.yml 中修改环境变量:
 ```yaml
 environment:
-  - MODEL_PATH=models/model_dynamic.onnx
-  - ORT_THREADS=2
-  - MAX_DIMENSION=1024
+  - MODEL_PATH=models/silueta.onnx
+  - ORT_THREADS=1
+  - MAX_DIMENSION=512
 ```
 
 ### 方式三:根目录 docker-compose.yml(与 nanobot 一起部署)
@@ -220,21 +217,23 @@ docker compose up -d seg-service
 
 | 参数 | 值 | 作用 |
 |------|-----|------|
-| `mem_limit` | 512m | 容器可用内存上限 |
-| `memswap_limit` | 512m | 不允许使用 swap(设为与 mem_limit 相同) |
+| `mem_limit` | 1g | 容器可用内存上限 (RMBG-1.4 默认) |
+| `memswap_limit` | 1g | 不允许使用 swap(设为与 mem_limit 相同) |
 
 当容器超出内存限制时,Docker 会 kill 容器进程(而非宿主机进程),容器随后自动重启。
+
+> **提示**: 如果使用轻量级 silueta 模型,可将内存限制降至 512m。
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MODEL_PATH` | `models/silueta.onnx` | ONNX 模型文件路径。设为 `models/model_dynamic.onnx` 启用 RMBG-1.4 |
+| `MODEL_PATH` | `models/model_dynamic.onnx` | ONNX 模型文件路径。设为 `models/silueta.onnx` 使用轻量级 silueta |
 | `MODEL_DIR` | `models` | 模型目录(当 MODEL_PATH 未设置时使用) |
 | `MODEL_TYPE` | (自动检测) | 强制指定模型类型: `silueta` 或 `rmbg14`。不设则根据文件名自动检测 |
-| `ORT_THREADS` | `1` | ONNX Runtime 推理线程数 |
+| `ORT_THREADS` | `2` | ONNX Runtime 推理线程数 |
 | `PORT` | `8001` | 服务监听端口 |
-| `MAX_DIMENSION` | `512` | 输入图片最大边,超过则自动缩小。RMBG-1.4 建议设为 1024 |
+| `MAX_DIMENSION` | `1024` | 输入图片最大边,超过则自动缩小。silueta 建议设为 512 |
 
 ## 文件结构
 
@@ -246,7 +245,8 @@ seg-service/
 ├── requirements.txt    # Python 依赖
 ├── .dockerignore       # Docker 构建排除项
 ├── models/
-│   └── silueta.onnx    # 预下载的 ONNX 模型 (~43 MB)
+│   ├── model_dynamic.onnx  # RMBG-1.4 ONNX 模型 (~169 MB, 默认)
+│   └── silueta.onnx       # silueta ONNX 模型 (~43 MB, 轻量级备选)
 ├── test_api.py         # API 基础测试(合成图片)
 └── test_image.py       # 真实图片分割测试
 ```
