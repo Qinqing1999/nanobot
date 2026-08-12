@@ -1,9 +1,19 @@
 # ===========================================================================
-# Subject Segmentation Service — Dockerfile (onnxruntime + silueta, ~43 MB model)
+# Subject Segmentation Service — Dockerfile (onnxruntime)
 #
-# Direct ONNX inference, no rembg/scipy/numba. Runtime memory ~200-300 MB.
+# Supports two model types (auto-detected from MODEL_PATH):
+#   - silueta (~43 MB, 320×320, ~200-300 MB runtime)
+#   - rmbg14  (~168 MB, 640×640, ~400 MB runtime)
+#
 # Build:  docker build -t seg-service:latest seg-service/
-# Run:    docker run -d --name seg-service -p 8001:8001 seg-service:latest
+# Run (silueta):  docker run -d --name seg-service -p 8001:8001 seg-service:latest
+# Run (rmbg14):   docker run -d --name seg-service -p 8001:8001 \
+#                   -e MODEL_PATH=models/model_dynamic.onnx \
+#                   -e ORT_THREADS=2 \
+#                   -e MAX_DIMENSION=1024 \
+#                   -v $(pwd)/rmbg14_deploy/models/model_dynamic.onnx:/app/models/model_dynamic.onnx \
+#                   --mem-limit 512m \
+#                   seg-service:latest
 # ===========================================================================
 
 FROM python:3.11-slim
@@ -20,6 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY models/silueta.onnx models/
 COPY app.py .
 
+# Default: silueta model. Override with -e MODEL_PATH=models/model_dynamic.onnx for RMBG-1.4
 ENV MODEL_PATH=models/silueta.onnx
 ENV ORT_THREADS=1
 ENV MAX_DIMENSION=512

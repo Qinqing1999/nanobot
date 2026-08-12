@@ -34,7 +34,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_media_dir, get_runtime_subdir
 from nanobot.config.schema import Base
-from nanobot.utils.helpers import split_message
+from nanobot.utils.helpers import detect_image_mime, split_message
 
 # ---------------------------------------------------------------------------
 # Protocol constants (from openclaw-weixin types.ts)
@@ -113,10 +113,19 @@ _VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
 _VOICE_EXTS = {".mp3", ".wav", ".amr", ".silk", ".ogg", ".m4a", ".aac", ".flac"}
 
 
+# URL field names that WeChat may use for various media types (images,
+# stickers, emoji, etc.).  The reference protocol uses encrypt_query_param
+# and full_url, but custom stickers/emoji may use alternative fields.
+_MEDIA_URL_FIELDS = ("encrypt_query_param", "full_url", "url", "cdn_url", "thumb_url", "download_url")
+
+
 def _has_downloadable_media_locator(media: dict[str, Any] | None) -> bool:
     if not isinstance(media, dict):
         return False
-    return bool(str(media.get("encrypt_query_param", "") or "") or str(media.get("full_url", "") or "").strip())
+    for field in _MEDIA_URL_FIELDS:
+        if str(media.get(field, "") or "").strip():
+            return True
+    return False
 
 
 class WeixinConfig(Base):
@@ -922,6 +931,37 @@ class WeixinChannel(BaseChannel):
                 else:
                     content_parts.append("[video]")
 
+            else:
+                # Unknown item type (e.g. sticker, emoji, link card, etc.).
+                # Try to extract and download media from any *_item sub-dict
+                # so that GIF stickers and other custom media are not silently
+                # dropped.
+                self.logger.debug(
+                    "WeChat unknown item type {}: keys={}",
+                    item_type,
+                    list(item.keys()),
+                )
+                found_media = False
+                for key in item:
+                    if not key.endswith("_item"):
+                        continue
+                    sub_item = cast(dict[str, Any] | None, item.get(key))
+                    if not isinstance(sub_item, dict):
+                        continue
+                    media = cast(dict[str, Any], sub_item.get("media") or {})
+                    if _has_downloadable_media_locator(media):
+                        has_top_level_downloadable_media = True
+                        found_media = True
+                        file_path = await self._download_media_item(sub_item, "image")
+                        if file_path:
+                            content_parts.append(f"[sticker]\n[Image: source: {file_path}]")
+                            media_paths.append(file_path)
+                        else:
+                            content_parts.append("[sticker]")
+                        break
+                if not found_media:
+                    content_parts.append(f"[unknown item type {item_type}]")
+
         # Fallback: when no top-level media was downloaded, try quoted/referenced media.
         # This aligns with the reference plugin behavior that checks ref_msg.message_item
         # when main item_list has no downloadable media.
@@ -932,8 +972,19 @@ class WeixinChannel(BaseChannel):
                     continue
                 ref = cast(dict[str, Any], item.get("ref_msg") or {})
                 candidate = cast(dict[str, Any], ref.get("message_item") or {})
-                if candidate.get("type", 0) in (ITEM_IMAGE, ITEM_VOICE, ITEM_FILE, ITEM_VIDEO):
+                ref_candidate_type = candidate.get("type", 0)
+                if ref_candidate_type in (ITEM_IMAGE, ITEM_VOICE, ITEM_FILE, ITEM_VIDEO):
                     ref_media_item = candidate
+                    break
+                # Also accept unknown item types (e.g. stickers) that carry media.
+                for key in candidate:
+                    if not key.endswith("_item"):
+                        continue
+                    sub = candidate.get(key)
+                    if isinstance(sub, dict) and _has_downloadable_media_locator(sub.get("media")):
+                        ref_media_item = candidate
+                        break
+                if ref_media_item:
                     break
 
             if ref_media_item:
@@ -979,6 +1030,21 @@ class WeixinChannel(BaseChannel):
                     if file_path:
                         content_parts.append(f"[video]\n[Video: source: {file_path}]")
                         media_paths.append(file_path)
+                else:
+                    # Unknown referenced item type (e.g. sticker/emoji).
+                    # Try to extract media from any *_item sub-dict.
+                    for key in ref_media_item:
+                        if not key.endswith("_item"):
+                            continue
+                        sub = ref_media_item.get(key)
+                        if not isinstance(sub, dict):
+                            continue
+                        if _has_downloadable_media_locator(sub.get("media")):
+                            file_path = await self._download_media_item(sub, "image")
+                            if file_path:
+                                content_parts.append(f"[sticker]\n[Image: source: {file_path}]")
+                                media_paths.append(file_path)
+                            break
 
         content = "\n".join(content_parts)
         if not content:
@@ -1017,7 +1083,20 @@ class WeixinChannel(BaseChannel):
             encrypt_query_param = str(media.get("encrypt_query_param", "") or "")
             full_url = str(media.get("full_url", "") or "").strip()
 
+            # Also check alternative URL fields that stickers/emoji may use.
+            if not full_url:
+                for alt_field in ("url", "cdn_url", "thumb_url", "download_url"):
+                    alt_val = str(media.get(alt_field, "") or "").strip()
+                    if alt_val:
+                        full_url = alt_val
+                        break
+
             if not encrypt_query_param and not full_url:
+                self.logger.debug(
+                    "WeChat media item has no downloadable locator: type={} media_keys={}",
+                    media_type,
+                    list(media.keys()),
+                )
                 return None
 
             # Resolve AES key (media-download.ts:43-45, pic-decrypt.ts:40-52)
@@ -1036,8 +1115,9 @@ class WeixinChannel(BaseChannel):
 
             # Reference protocol behavior: VOICE/FILE/VIDEO require aes_key;
             # only IMAGE may be downloaded as plain bytes when key is missing.
-            if media_type != "image" and not aes_key_b64:
-                return None
+            # However, some media items (e.g. stickers/emoji) may not carry an
+            # AES key.  Attempt the download regardless — if the data turns out
+            # to be encrypted and we have a key, we decrypt afterwards.
 
             assert self._client is not None
             fallback_url = ""
@@ -1084,6 +1164,12 @@ class WeixinChannel(BaseChannel):
 
             media_dir = get_media_dir("weixin")
             ext = _ext_for_type(media_type)
+            # For images, detect the actual format from magic bytes so GIF,
+            # PNG, WebP etc. get the correct extension instead of always .jpg.
+            if media_type == "image":
+                detected_ext = _detect_image_ext(data)
+                if detected_ext:
+                    ext = detected_ext
             if not filename:
                 ts = int(time.time())
                 hash_seed = encrypt_query_param or full_url
@@ -1798,3 +1884,24 @@ def _ext_for_type(media_type: str) -> str:
         "video": ".mp4",
         "file": "",
     }.get(media_type, "")
+
+
+# MIME → extension map for image magic-byte detection.
+_IMAGE_MIME_EXT = {
+    "image/gif": ".gif",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+}
+
+
+def _detect_image_ext(data: bytes) -> str:
+    """Detect image file extension from magic bytes.
+
+    Returns the appropriate extension (e.g. ``.gif`` for GIF data) or
+    falls back to ``.jpg`` when detection fails.
+    """
+    mime = detect_image_mime(data[:16])
+    if mime and mime in _IMAGE_MIME_EXT:
+        return _IMAGE_MIME_EXT[mime]
+    return ".jpg"

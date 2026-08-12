@@ -109,8 +109,9 @@ class SegmentSubjectTool(Tool):
         except OSError as exc:
             return ToolResult.error(f"无法读取图片文件: {exc}")
 
-        from nanobot.utils.helpers import detect_image_mime
         import io
+
+        from nanobot.utils.helpers import detect_image_mime
 
         mime = detect_image_mime(raw_bytes)
         if mime is None:
@@ -177,7 +178,7 @@ class SegmentSubjectTool(Tool):
             "service": "segmentation",
             "next_step": (
                 "使用 apply_mask 工具，将 image 参数设为原图路径或制品 ID，"
-                "mask 参数设为此 mask_path，生成纯白背景的干净主体图。"
+                "mask 参数设为此 mask_path，生成透明背景的干净主体图。"
             ),
         }
         if image_dimensions:

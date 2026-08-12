@@ -87,6 +87,43 @@ result = json.loads(resp.read())
 mask_url = result["mask"]  # data:image/png;base64,...
 ```
 
+### `POST /remove_bg`
+
+对输入图片进行背景去除,返回透明背景 PNG (RGBA)。
+
+**请求体**:
+```json
+{
+  "image": "data:image/png;base64,<base64编码的图片数据>"
+}
+```
+
+**成功响应** (200):
+```json
+{
+  "result": "data:image/png;base64,<base64编码的透明PNG数据>"
+}
+```
+
+- `result`: Data URL 格式的 RGBA PNG。背景区域 alpha=0(完全透明),主体区域 alpha=255(不透明)。
+
+**Python 示例**:
+```python
+import base64, json, urllib.request
+
+with open("my_image.png", "rb") as f:
+    data_url = f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
+
+req = urllib.request.Request(
+    "http://localhost:8001/remove_bg",
+    data=json.dumps({"image": data_url}).encode(),
+    headers={"Content-Type": "application/json"},
+)
+resp = urllib.request.urlopen(req, timeout=120)
+result = json.loads(resp.read())
+transparent_png_url = result["result"]  # data:image/png;base64,...
+```
+
 ### 大图保护机制
 
 当输入图片最大边超过 `MAX_DIMENSION`(默认 512px)时,服务会自动等比缩小后再推理,防止低内存服务器 OOM。返回的蒙版尺寸对应缩小后的图片尺寸。
@@ -138,6 +175,36 @@ services:
       start_period: 30s
 ```
 
+### 使用 RMBG-1.4 模型部署
+
+如需更高精度的 RMBG-1.4 模型,将 `model_dynamic.onnx` 复制到 `models/` 目录并设置环境变量:
+
+```bash
+# 复制模型
+cp rmbg14_deploy/models/model_dynamic.onnx models/
+
+# 运行(RMBG-1.4 需要更多内存和线程)
+docker run -d \
+  --name seg-service-rmbg \
+  -p 8001:8001 \
+  -e MODEL_PATH=models/model_dynamic.onnx \
+  -e ORT_THREADS=2 \
+  -e MAX_DIMENSION=1024 \
+  -v $(pwd)/models/model_dynamic.onnx:/app/models/model_dynamic.onnx \
+  --restart unless-stopped \
+  --memory=512m \
+  --memory-swap=512m \
+  seg-service:latest
+```
+
+或在 docker-compose.yml 中修改环境变量:
+```yaml
+environment:
+  - MODEL_PATH=models/model_dynamic.onnx
+  - ORT_THREADS=2
+  - MAX_DIMENSION=1024
+```
+
 ### 方式三:根目录 docker-compose.yml(与 nanobot 一起部署)
 
 在项目根目录:
@@ -162,11 +229,12 @@ docker compose up -d seg-service
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MODEL_PATH` | `models/silueta.onnx` | ONNX 模型文件路径 |
+| `MODEL_PATH` | `models/silueta.onnx` | ONNX 模型文件路径。设为 `models/model_dynamic.onnx` 启用 RMBG-1.4 |
 | `MODEL_DIR` | `models` | 模型目录(当 MODEL_PATH 未设置时使用) |
+| `MODEL_TYPE` | (自动检测) | 强制指定模型类型: `silueta` 或 `rmbg14`。不设则根据文件名自动检测 |
 | `ORT_THREADS` | `1` | ONNX Runtime 推理线程数 |
 | `PORT` | `8001` | 服务监听端口 |
-| `MAX_DIMENSION` | `512` | 输入图片最大边,超过则自动缩小 |
+| `MAX_DIMENSION` | `512` | 输入图片最大边,超过则自动缩小。RMBG-1.4 建议设为 1024 |
 
 ## 文件结构
 

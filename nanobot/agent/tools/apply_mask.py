@@ -47,8 +47,8 @@ class ApplyMaskError(RuntimeError):
         },
         "background": {
             "type": "string",
-            "description": "背景填充方式：white（默认，纯白）或 transparent（透明）。",
-            "enum": ["white", "transparent"],
+            "description": "背景填充方式：transparent（默认，透明 PNG）或 white（纯白背景）。",
+            "enum": ["transparent", "white"],
         },
     },
     "required": ["image", "mask"],
@@ -87,12 +87,13 @@ class ApplyMaskTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "主体提取——用蒙版从原图中提取主体并替换背景为纯白色。\n"
-            "蒙版白色区域保留原图像素，黑色区域替换为指定背景色。\n"
+            "主体提取——用蒙版从原图中提取主体，默认生成透明背景 PNG。\n"
+            "蒙版白色区域保留原图像素，黑色区域变为透明（或可选纯白背景）。\n"
             "输入原图路径或制品 ID，以及 segment_subject 返回的蒙版路径。\n"
             "输出自动注册为图片制品并发送给用户（含制品 ID 通知），无需额外调用 message 工具。\n"
             "典型工作流：segment_subject（生成主体蒙版）→ apply_mask（主体提取）。\n"
             "通常在 segment_subject 之后调用，用于提取图片主体并去除背景干扰。\n"
+            "默认输出透明背景 PNG（background=transparent），如需纯白背景可指定 background=white。\n"
             "IMPORTANT: 不要因为用户上传了图片就调用此工具。"
             "仅在用户明确要求提取主体/去背景/抠图时才使用。"
         )
@@ -101,7 +102,7 @@ class ApplyMaskTool(Tool):
         self,
         image: str,
         mask: str,
-        background: str = "white",
+        background: str = "transparent",
         **kwargs: Any,
     ) -> str:
         # 1. Resolve image path (artifact ID or file path)
@@ -177,7 +178,7 @@ class ApplyMaskTool(Tool):
         image_bytes: bytes,
         mask_bytes: bytes,
         *,
-        background: str = "white",
+        background: str = "transparent",
     ) -> str:
         """Composite image with mask, producing a clean subject image."""
         from PIL import Image

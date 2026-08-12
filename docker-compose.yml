@@ -60,6 +60,13 @@ services:
     environment:
       - ORT_THREADS=1
       - MAX_DIMENSION=512
+      # To use RMBG-1.4 instead of silueta, uncomment the following lines:
+      # - MODEL_PATH=models/model_dynamic.onnx
+      # - ORT_THREADS=2
+      # - MAX_DIMENSION=1024
+    volumes:
+      # Mount RMBG-1.4 model (uncomment to enable):
+      # - ./seg-service/rmbg14_deploy/models/model_dynamic.onnx:/app/models/model_dynamic.onnx:ro
     mem_limit: 512m
     memswap_limit: 512m
     healthcheck:

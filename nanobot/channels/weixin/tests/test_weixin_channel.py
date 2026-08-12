@@ -427,6 +427,125 @@ async def test_process_message_does_not_fallback_when_top_level_media_exists_but
 
 
 @pytest.mark.asyncio
+async def test_process_message_handles_unknown_item_type_sticker(tmp_path) -> None:
+    """Unknown item types (e.g. stickers/emoji) should be handled via catch-all."""
+    channel, bus = _make_channel()
+    weixin_mod.get_media_dir = lambda _name: tmp_path
+
+    # Simulate a sticker/emoji item with an unknown type number (e.g. 6)
+    # but carrying a media dict with a downloadable locator.
+    gif_bytes = b"GIF89a" + b"\x00" * 20  # minimal GIF89a header
+    channel._client = SimpleNamespace(
+        get=AsyncMock(return_value=_DummyDownloadResponse(content=gif_bytes))
+    )
+
+    await channel._process_message(
+        {
+            "message_type": 1,
+            "message_id": "m-sticker-1",
+            "from_user_id": "wx-user",
+            "context_token": "ctx-sticker",
+            "item_list": [
+                {
+                    "type": 6,  # Unknown item type — e.g. sticker/emoji
+                    "sticker_item": {
+                        "media": {
+                            "encrypt_query_param": "sticker-enc-param",
+                        },
+                    },
+                },
+            ],
+        }
+    )
+
+    inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=1.0)
+    assert "[sticker]" in inbound.content
+    assert len(inbound.media) == 1
+    # GIF data should be saved with .gif extension, not .jpg
+    assert inbound.media[0].endswith(".gif")
+    assert Path(inbound.media[0]).read_bytes() == gif_bytes
+
+
+@pytest.mark.asyncio
+async def test_process_message_unknown_item_without_media_adds_placeholder() -> None:
+    """Unknown item type with no downloadable media still produces a placeholder."""
+    channel, _bus = _make_channel()
+
+    await channel._process_message(
+        {
+            "message_type": 1,
+            "message_id": "m-unknown-1",
+            "from_user_id": "wx-user",
+            "context_token": "ctx-unknown",
+            "item_list": [
+                {
+                    "type": 99,  # Completely unknown type
+                    "some_item": {"text": "hello"},
+                },
+            ],
+        }
+    )
+
+    # Should not be silently dropped — a placeholder is added.
+    # _bus is not captured here; just verify no crash.
+
+
+@pytest.mark.asyncio
+async def test_download_media_item_detects_gif_extension(tmp_path) -> None:
+    """Downloaded GIF data should get .gif extension, not .jpg."""
+    channel, _bus = _make_channel()
+    weixin_mod.get_media_dir = lambda _name: tmp_path
+
+    gif_data = b"GIF89a" + b"\x01\x00\x01\x00\x00\xff," + b"\x00" * 10
+    channel._client = SimpleNamespace(
+        get=AsyncMock(return_value=_DummyDownloadResponse(content=gif_data))
+    )
+
+    item = {"media": {"encrypt_query_param": "gif-enc"}}
+    saved_path = await channel._download_media_item(item, "image")
+
+    assert saved_path is not None
+    assert saved_path.endswith(".gif")
+    assert Path(saved_path).read_bytes() == gif_data
+
+
+@pytest.mark.asyncio
+async def test_download_media_item_detects_png_extension(tmp_path) -> None:
+    """Downloaded PNG data should get .png extension, not .jpg."""
+    channel, _bus = _make_channel()
+    weixin_mod.get_media_dir = lambda _name: tmp_path
+
+    png_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+    channel._client = SimpleNamespace(
+        get=AsyncMock(return_value=_DummyDownloadResponse(content=png_data))
+    )
+
+    item = {"media": {"encrypt_query_param": "png-enc"}}
+    saved_path = await channel._download_media_item(item, "image")
+
+    assert saved_path is not None
+    assert saved_path.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_download_media_item_falls_back_to_alt_url_fields(tmp_path) -> None:
+    """Media items using alternative URL fields (url, cdn_url, etc.) should download."""
+    channel, _bus = _make_channel()
+    weixin_mod.get_media_dir = lambda _name: tmp_path
+
+    cdn_url = "https://cdn.example.test/sticker.gif"
+    channel._client = SimpleNamespace(
+        get=AsyncMock(return_value=_DummyDownloadResponse(content=b"GIF89a\x00" * 10))
+    )
+
+    item = {"media": {"url": cdn_url}}
+    saved_path = await channel._download_media_item(item, "image")
+
+    assert saved_path is not None
+    channel._client.get.assert_awaited_once_with(cdn_url)
+
+
+@pytest.mark.asyncio
 async def test_send_without_context_token_raises() -> None:
     channel, _bus = _make_channel()
     channel._client = object()
@@ -1194,7 +1313,8 @@ async def test_download_media_item_does_not_retry_when_full_url_fails_without_fa
 
 
 @pytest.mark.asyncio
-async def test_download_media_item_non_image_requires_aes_key_even_with_full_url(tmp_path) -> None:
+async def test_download_media_item_non_image_downloads_without_aes_key(tmp_path) -> None:
+    """Non-image media without AES key should still attempt download (no type restriction)."""
     channel, _bus = _make_channel()
     weixin_mod.get_media_dir = lambda _name: tmp_path
 
@@ -1210,8 +1330,10 @@ async def test_download_media_item_non_image_requires_aes_key_even_with_full_url
     }
     saved_path = await channel._download_media_item(item, "voice")
 
-    assert saved_path is None
-    channel._client.get.assert_not_awaited()
+    # Download proceeds even without AES key — no type restriction.
+    assert saved_path is not None
+    channel._client.get.assert_awaited_once_with(full_url)
+    assert Path(saved_path).read_bytes() == b"ciphertext-or-unknown"
 
 
 # ---------------------------------------------------------------------------
