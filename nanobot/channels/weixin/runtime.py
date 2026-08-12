@@ -21,7 +21,10 @@ import uuid
 from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from nanobot.channels.weixin.nonblocking import AsyncTask, AsyncTaskCoordinator
 from urllib.parse import quote
 
 import httpx
@@ -148,6 +151,10 @@ class WeixinConfig(Base):
     # id/name/input on the non-streaming Messages path (a common third-party
     # relay bug). Set to false only if a relay's streaming/SSE path is broken.
     streaming: bool = True
+    # Non-blocking async processing (ADR-0014)
+    nonblocking: bool = False  # Enable async task coordinator
+    max_concurrent_tasks: int = 3  # Max parallel tasks per session
+    ack_message: str = ""  # Acknowledgment message (empty = no ack)
 
 
 class WeixinChannel(BaseChannel):
@@ -192,6 +199,8 @@ class WeixinChannel(BaseChannel):
         # incremental delivery, so when streaming is enabled we accumulate the
         # deltas and flush the full reply in one shot at _stream_end.
         self._stream_buffers: dict[str, list[str]] = {}
+        # Non-blocking async task coordinator (ADR-0014)
+        self._async_coordinator: AsyncTaskCoordinator | None = None
 
     # ------------------------------------------------------------------
     # State persistence
@@ -641,6 +650,29 @@ class WeixinChannel(BaseChannel):
 
         self.logger.info("channel starting with long-poll...")
 
+        # Initialize non-blocking async coordinator if enabled (ADR-0014)
+        if getattr(self.config, 'nonblocking', False):
+            from nanobot.channels.weixin.nonblocking import (
+                AsyncTaskCoordinator,
+                KeywordIntentClassifier,
+                SessionForkManager,
+            )
+            from nanobot.session.manager import SessionManager
+
+            session_mgr = SessionManager()
+            fork_manager = SessionForkManager(
+                get_session_fn=session_mgr.get_session,
+            )
+            self._async_coordinator = AsyncTaskCoordinator(
+                channel_name="weixin",
+                send_fn=self._send_text_nonblocking,
+                max_concurrent=getattr(self.config, 'max_concurrent_tasks', 3),
+                classifier=KeywordIntentClassifier(),
+                fork_manager=fork_manager,
+                ack_template=getattr(self.config, 'ack_message', ''),
+            )
+            self.logger.info("non-blocking async mode enabled (max_concurrent={})", self.config.max_concurrent_tasks)
+
         consecutive_failures = 0
         while self._running:
             try:
@@ -1059,6 +1091,26 @@ class WeixinChannel(BaseChannel):
 
         await self._start_typing(from_user_id, ctx_token)
 
+        # Non-blocking async path (ADR-0014)
+        if self._async_coordinator is not None:
+            # Build a lightweight inbound message for the coordinator
+            class _InboundMsg:
+                def __init__(self, content: str, chat_id: str):
+                    self.content = content
+                    self.chat_id = chat_id
+                    self.media_paths = media_paths or []
+                    self.metadata = {"message_id": msg_id}
+
+            inbound_msg = _InboundMsg(content=content, chat_id=from_user_id)
+            task_id = await self._async_coordinator.submit(
+                msg=inbound_msg,
+                session_key=self.make_session_key(from_user_id),
+                context_token=ctx_token,
+            )
+            self.logger.debug("non-blocking task submitted: {}", task_id[:12])
+            return  # Return immediately — processing happens in background
+
+        # Original blocking path (default behavior)
         await self._handle_message(
             sender_id=from_user_id,
             chat_id=from_user_id,
@@ -1579,6 +1631,85 @@ class WeixinChannel(BaseChannel):
             await self._send_typing(chat_id, ticket, TYPING_STATUS_CANCEL)
         except Exception as e:
             self.logger.debug("typing clear failed for {}: {}", chat_id, e)
+
+    # ------------------------------------------------------------------
+    # Non-blocking async helpers (ADR-0014)
+    # ------------------------------------------------------------------
+
+    async def _send_text_nonblocking(
+        self,
+        chat_id: str,
+        content: str,
+        context_token: str = "",
+    ) -> None:
+        """Send text message for non-blocking async responses.
+
+        Wrapper around _send_text that handles missing context_token gracefully
+        and catches errors without propagating (best-effort delivery).
+        """
+        # Try to find cached context_token if not provided
+        ctx = context_token or self._context_tokens.get(chat_id, "")
+        try:
+            await self._send_text(chat_id, content, ctx)
+        except Exception as e:
+            self.logger.warning(
+                "non-blocking send failed to {} (best-effort): {}",
+                chat_id[:20] + "..." if len(chat_id) > 20 else chat_id,
+                e,
+            )
+
+    async def _process_nonblocking_task(
+        self,
+        task: AsyncTask,  # noqa: F821 - imported in TYPE_CHECKING
+        context_token: str,
+    ) -> None:
+        """Process a non-blocking async task end-to-end.
+
+        This is the background coroutine that:
+        1. Publishes the message to the bus → AgentLoop
+        2. Waits for completion (with cancellation support)
+        3. Merges results back into session
+        4. Pushes response to user
+
+        Called by AsyncTaskCoordinator._execute_task via asyncio.create_task.
+        """
+        from nanobot.channels.weixin.nonblocking import TaskState
+
+        try:
+            # Step 1: Publish to bus for AgentLoop processing
+            # The actual LLM execution happens in AgentRunner
+            await self._handle_message(
+                sender_id=task.original_msg.chat_id,
+                chat_id=task.original_msg.chat_id,
+                content=task.original_msg.content,
+                media=getattr(task.original_msg, 'media_paths', None),
+                metadata=task.original_msg.metadata or {},
+            )
+
+            task.state = TaskState.COMPLETED
+            task.completed_at = time.time()
+
+        except asyncio.CancelledError:
+            task.state = TaskState.CANCELLED
+            task.completed_at = time.time()
+            self.logger.info("[weixin] Task {} cancelled", task.task_id[:12])
+
+        except Exception as e:
+            task.state = TaskState.FAILED
+            task.completed_at = time.time()
+            task.error = str(e)
+            self.logger.exception(
+                "[weixin] Task {} failed: {}", task.task_id[:12], e
+            )
+            # Best-effort error notification
+            try:
+                await self._send_text_nonblocking(
+                    task.original_msg.chat_id,
+                    f"[处理失败: {str(e)[:100]}]",
+                    context_token,
+                )
+            except Exception:
+                pass
 
     async def _send_text(
         self,
