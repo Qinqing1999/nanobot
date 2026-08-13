@@ -351,8 +351,8 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
         content=(
-            f"New conversation started (session {next_index}).\n"
-            f"Use /sessions to list all conversations, /switch <id> to switch."
+            f"新会话已创建（第 {next_index} 轮）。\n"
+            f"用 /sessions 查看所有会话，/switch <id> 切换。"
         ),
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
@@ -374,7 +374,7 @@ async def cmd_sessions(ctx: CommandContext) -> OutboundMessage:
     if not chat_sessions or (len(chat_sessions) == 1 and chat_sessions[0].get("key") == ctx.key):
         return OutboundMessage(
             channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content="This chat has only one conversation. Use /new to start another.",
+            content="本聊天只有一个会话。用 /new 创建新对话。",
             metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
@@ -395,7 +395,7 @@ async def cmd_sessions(ctx: CommandContext) -> OutboundMessage:
         elif marker:
             lines.append(f"      {marker.strip()}")
 
-    lines.append("\nUse /switch <id> to switch conversations")
+    lines.append("\n用 /switch <id> 切换")
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
         content="\n".join(lines),
@@ -415,7 +415,7 @@ async def cmd_switch(ctx: CommandContext) -> OutboundMessage:
     if not args:
         return OutboundMessage(
             channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content="Usage: /switch <id>\nUse /sessions to see available conversations.",
+            content="用法: /switch <id>",
             metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
@@ -424,7 +424,7 @@ async def cmd_switch(ctx: CommandContext) -> OutboundMessage:
     except ValueError:
         return OutboundMessage(
             channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content=f"Invalid session id: {args}",
+            content=f"无效的会话ID: {args}",
             metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
@@ -440,7 +440,7 @@ async def cmd_switch(ctx: CommandContext) -> OutboundMessage:
     if target_meta is None and target_index > 0:
         return OutboundMessage(
             channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content=f"Conversation [{target_index}] does not exist. Use /sessions to see available ones.",
+            content=f"会话 [{target_index}] 不存在。用 /sessions 查看可用列表。",
             metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
@@ -452,7 +452,7 @@ async def cmd_switch(ctx: CommandContext) -> OutboundMessage:
 
     return OutboundMessage(
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-        content=f"Switched to conversation [{target_index}].",
+        content=f"已切换到对话 [{target_index}]。",
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 

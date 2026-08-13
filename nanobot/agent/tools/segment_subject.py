@@ -15,6 +15,7 @@ from loguru import logger
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.image_utils import ImageInputError, resolve_image_input
 from nanobot.config.paths import get_media_dir
+from nanobot.security.network import PinnedDNSAsyncTransport
 from nanobot.utils.artifacts import decode_image_data_url
 from nanobot.utils.helpers import ensure_dir
 
@@ -193,7 +194,10 @@ class SegmentSubjectTool(Tool):
         body: dict[str, Any] = {"image": image_data_url}
 
         try:
-            async with httpx.AsyncClient(timeout=_SEGMENT_TIMEOUT_S) as client:
+            async with httpx.AsyncClient(
+                timeout=_SEGMENT_TIMEOUT_S,
+                transport=PinnedDNSAsyncTransport(allow_loopback=True),
+            ) as client:
                 response = await client.post(url, headers=headers, json=body)
         except httpx.ConnectError as exc:
             raise SegmentSubjectError(
