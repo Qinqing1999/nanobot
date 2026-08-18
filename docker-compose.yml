@@ -22,10 +22,10 @@ services:
       resources:
         limits:
           cpus: "1"
-          memory: 1G
+          memory: 512M
         reservations:
           cpus: "0.25"
-          memory: 256M
+          memory: 128M
 
   nanobot-api:
     container_name: nanobot-api
@@ -39,10 +39,10 @@ services:
       resources:
         limits:
           cpus: "1"
-          memory: 1G
+          memory: 512M
         reservations:
           cpus: "0.25"
-          memory: 256M
+          memory: 128M
 
   nanobot-cli:
     <<: *common-config
@@ -65,8 +65,8 @@ services:
       # - MODEL_PATH=models/silueta.onnx
       # - ORT_THREADS=1
       # - MAX_DIMENSION=512
-    mem_limit: 1g
-    memswap_limit: 1g
+    mem_limit: 512m
+    memswap_limit: 512m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s

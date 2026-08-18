@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+
+      .scene {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+      }
+
+      .scene-1 {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+
+      .scene-2 {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      }
+
+      .scene-3 {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+      }
+
+      .title {
+        font-size: 96px;
+        font-weight: 700;
+        color: #fff;
+        text-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        letter-spacing: 4px;
+      }
+
+      .subtitle {
+        font-size: 48px;
+        color: rgba(255, 255, 255, 0.85);
+        margin-top: 24px;
+        letter-spacing: 2px;
+      }
+
+      .content {
+        font-size: 64px;
+        color: #fff;
+        text-align: center;
+        max-width: 80%;
+        line-height: 1.6;
+      }
+
+      .logo {
+        position: absolute;
+        bottom: 60px;
+        right: 60px;
+        font-size: 36px;
+        color: rgba(255, 255, 255, 0.6);
+        letter-spacing: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="12"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- 场景1: 标题 (0-4秒) -->
+      <div class="scene scene-1 clip" data-start="0" data-duration="4" data-track-index="1">
+        <div style="text-align: center">
+          <div class="title">HyperFrames</div>
+          <div class="subtitle">用 HTML 创作视频</div>
+        </div>
+        <div class="logo">Powered by nanobot</div>
+      </div>
+
+      <!-- 场景2: 特性展示 (4-8秒) -->
+      <div class="scene scene-2 clip" data-start="4" data-duration="4" data-track-index="1">
+        <div class="content">
+          HTML 即视频<br />
+          CSS 控制样式<br />
+          AI 一键生成
+        </div>
+      </div>
+
+      <!-- 场景3: 结尾 (8-12秒) -->
+      <div class="scene scene-3 clip" data-start="8" data-duration="4" data-track-index="1">
+        <div style="text-align: center">
+          <div class="title">开始创作</div>
+          <div class="subtitle">让 AI 为你生成视频</div>
+        </div>
+        <div class="logo">Powered by nanobot</div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      // 场景1 淡入
+      tl.to(".scene-1", { opacity: 1, duration: 0.5 }, 0)
+        .to(".scene-1 .title", { y: 0, opacity: 1, duration: 0.8 }, 0.2)
+        .to(".scene-1", { opacity: 0, duration: 0.3 }, 3.5);
+      // 场景2 淡入
+      tl.to(".scene-2", { opacity: 1, duration: 0.5 }, 4)
+        .to(".scene-2", { opacity: 0, duration: 0.3 }, 7.5);
+      // 场景3 淡入
+      tl.to(".scene-3", { opacity: 1, duration: 0.5 }, 8)
+        .to(".scene-3 .title", { scale: 1.1, duration: 1 }, 9)
+        .to(".scene-3", { opacity: 0, duration: 0.3 }, 11.5);
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

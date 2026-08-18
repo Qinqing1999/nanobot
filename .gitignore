@@ -104,3 +104,13 @@ webui/.verify-*
 
 # seg-service test artifacts
 seg-service/test_*.png
+
+# HyperFrames — node_modules and generated artifacts
+hyperframes/node_modules/
+hyperframes/output/
+hyperframes/audio/
+hyperframes/compositions/*/renders/
+hyperframes/.env
+
+# Nanobot local config (contains secrets)
+.nanobot/config.json

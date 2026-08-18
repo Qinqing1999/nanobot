@@ -1,0 +1,17 @@
+{
+  "name": "hyperframes-project",
+  "version": "1.0.0",
+  "description": "HyperFrames video rendering project for nanobot - HTML compositions to MP4 with TTS narration",
+  "type": "module",
+  "scripts": {
+    "render": "hyperframes render",
+    "preview": "hyperframes preview",
+    "tts": "hyperframes tts",
+    "lint": "hyperframes lint",
+    "doctor": "hyperframes doctor",
+    "browser:ensure": "hyperframes browser ensure"
+  },
+  "dependencies": {
+    "hyperframes": "0.4.45"
+  }
+}
